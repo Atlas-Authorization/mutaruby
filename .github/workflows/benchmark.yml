@@ -1,0 +1,27 @@
+name: Coverage benchmark
+
+# Runs the same mutants with the whole test command and with --coverage, and compares time and verdicts.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+          bundler-cache: true
+      - name: Fixture (Minitest)
+        run: bundle exec ruby script/benchmark-coverage.rb fixture test/fixtures/calc "ruby test/test_calc.rb" -j 4 --timeout 10
+      - name: Fixture (RSpec)
+        run: bundle exec ruby script/benchmark-coverage.rb fixture-rspec test/fixtures/calc "ruby -S rspec" -j 4 --timeout 10
+      - name: mutaruby itself (a 1/25 sample of its mutants, whole unit suite as the command)
+        run: >
+          bundle exec ruby script/benchmark-coverage.rb self . "ruby -Ilib -Itest test/run_unit.rb"
+          -j 4 --shard 1/25
