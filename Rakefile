@@ -6,10 +6,13 @@ ruby = RbConfig.ruby
 
 namespace :test do
   desc 'Unit tests'
-  task(:unit) { sh ruby, '-Ilib', '-Itest', 'test/run_unit.rb' }
+  task(:unit) { sh ruby, '-Ilib', '-Itest', 'test/run_unit.rb', *ENV.fetch('TESTOPTS', '').split }
 
   desc 'End-to-end: the CLI against test/fixtures/calc'
-  task(:e2e) { sh ruby, '-Ilib', '-Itest', '-e', 'Dir["test/e2e/*_test.rb"].sort.each { |f| require "./#{f}" }' }
+  task(:e2e) do
+    sh ruby, '-Ilib', '-Itest', '-e', 'Dir["test/e2e/*_test.rb"].sort.each { |f| require "./#{f}" }', '--',
+       *ENV.fetch('TESTOPTS', '').split
+  end
 end
 
 desc 'All tests'

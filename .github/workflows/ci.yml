@@ -26,6 +26,9 @@ jobs:
           bundler-cache: true
       - name: Unit tests
         run: bundle exec rake test:unit
+        timeout-minutes: 10
+        env:
+          TESTOPTS: -v
       - name: End-to-end tests
         run: bundle exec rake test:e2e
       # The fixture's `i += 1` -> `i -= 1` mutant loops forever: the run only finishes if the timeout stops the

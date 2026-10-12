@@ -128,9 +128,10 @@ class RunnerTest < Minitest::Test
   def test_every_run_is_a_fresh_process
     with_project(LIB) do |root|
       Dir.mktmpdir do |log|
-        cmd = rb(%(File.open("#{log}/pids", "a") { |f| f.puts "\#{Process.pid} \#{ENV.fetch("MUTARUBY_MUTANT_ID", "base")}" }))
+        # one file per run: concurrent appends to one file can lose lines on Windows
+        cmd = rb(%(id = ENV.fetch("MUTARUBY_MUTANT_ID", "base"); File.write("#{log}/pid-\#{id}", "\#{Process.pid} \#{id}")))
         r = run_on(root, cmd, jobs: 3)
-        lines = File.readlines(File.join(log, 'pids')).map(&:split)
+        lines = Dir[File.join(log, 'pid-*')].map { |f| File.read(f).split }
         assert_equal r.outcomes.size + 1, lines.size
         assert_equal lines.size, lines.map(&:first).uniq.size
         assert_equal ['base'] + r.outcomes.map { |o| o.mutation.id.to_s }, lines.map(&:last).sort_by { |x| x == 'base' ? -1 : x.to_i }
@@ -284,13 +285,14 @@ class RunnerTest < Minitest::Test
   def test_sandboxes_per_worker
     with_tmpdir do |tmp|
       with_project(LIB) do |root|
-        cmd = rb(%(File.write("#{tmp}/count-\#{ENV.fetch("MUTARUBY_MUTANT_ID", "base")}", Dir.glob("#{tmp}/#{sandbox_prefix}*").size.to_s)))
         { 0 => 1, 1 => 1, 2 => 2, 5 => 5, 50 => 6 }.each do |jobs, want|
+          count = %(Dir.glob("#{tmp}/#{sandbox_prefix}*").size.to_s)
+          cmd = rb(%(File.write("#{tmp}/count-#{jobs}-\#{ENV.fetch("MUTARUBY_MUTANT_ID", "base")}", #{count})))
           r = run_on(root, cmd, jobs: jobs)
           assert_equal 6, r.outcomes.size
           assert_equal [jobs, 1].max, r.jobs
-          assert_equal want.to_s, File.read(File.join(tmp, 'count-5')).strip, "jobs=#{jobs}"
-          assert_equal '1', File.read(File.join(tmp, 'count-base')).strip
+          assert_equal want.to_s, File.read(File.join(tmp, "count-#{jobs}-5")).strip, "jobs=#{jobs}"
+          assert_equal '1', File.read(File.join(tmp, "count-#{jobs}-base")).strip
           assert_empty sandboxes_in(tmp)
         end
       end
