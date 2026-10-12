@@ -349,4 +349,32 @@ class GeneratorTest < Minitest::Test
     assert_equal ['x => true', 'x => false'], changes("def self.ok? = x\n", 'method-body-bool')
     assert_empty triples("def ok?; end\n")
   end
+
+  # Regression: `parser` reads "\r\n" as "\n". Offsets must be mapped back to the file's own characters, or every
+  # mutant after the first CRLF line break lands in the wrong place (the splice self-check used to abort the run).
+  def test_crlf_sources
+    src = "x = 1\r\ny = f(a,\r\n  b) + c\r\nz = 2\nw = 3\r\n"
+    ms = muts(src)
+    refute_empty ms
+    ms.each do |m|
+      assert Mutaruby::Parsing.valid?('c.rb', m.text), m.label
+      assert_equal src.lines.first(m.lineno - 1).join, m.text.lines.first(m.lineno - 1).join, m.label
+    end
+    assert_equal "x = 1\r\ny = f(a,\r\n  b) - c\r\nz = 2\nw = 3\r\n", ms.find { |m| m.change == '+ => -' }.text
+    assert_equal "x = 1\r\ny = f(a,\r\n  b) + c\r\nz = 2\nw = 4\r\n", ms.find { |m| m.change == '3 => 4' }.text
+    assert_equal "x = 1\r\nnil\r\nz = 2\nw = 3\r\n", ms.find { |m| m.operator == 'statement-delete' && m.lineno == 2 }.text
+    removed = ms.select { |m| m.operator == 'argument-removal' }.map(&:text)
+    assert_includes removed, "x = 1\r\ny = f(b) + c\r\nz = 2\nw = 3\r\n"
+    plus = ms.find { |m| m.change == '+ => -' }
+    assert_equal ['b) + c', 3, 1], [plus.line_text, plus.lineno, plus.occurrence]
+  end
+
+  # A replacement that spans lines takes the file's line ending.
+  def test_multiline_replacements_follow_the_line_ending
+    crlf = "if a &&\r\n   b\r\n  x\r\nend\r\n"
+    m = muts(crlf, operators: ['condition-negate']).first
+    assert_equal "if !(a &&\r\n   b)\r\n  x\r\nend\r\n", m.text
+    lf = crlf.delete("\r")
+    assert_equal "if !(a &&\n   b)\n  x\nend\n", muts(lf, operators: ['condition-negate']).first.text
+  end
 end

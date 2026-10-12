@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'tempfile'
+require_relative 'platform'
 
 module Mutaruby
   # Runs the user's test command once, in a fresh process (a new shell and everything it starts), inside a sandbox.
@@ -16,8 +17,9 @@ module Mutaruby
     KILL_GRACE = 2
     POLL = 0.05
 
-    def initialize(command, root:, kill_grace: KILL_GRACE)
+    def initialize(command, root:, kill_grace: KILL_GRACE, platform: Platform.current)
       @command = command
+      @platform = platform
       @kill_grace = kill_grace
       @root = File.expand_path(root)
       @live = []
@@ -46,13 +48,13 @@ module Mutaruby
 
     def execute(dir, timeout, env, out)
       started = monotonic
-      pid = Process.spawn(child_env(dir).merge(env), '/bin/sh', '-c', @command,
-                          chdir: dir, pgroup: true, in: File::NULL, out: out, err: out)
+      pid = Process.spawn(child_env(dir).merge(env), *@platform.spawn_args(@command),
+                          chdir: dir, in: File::NULL, out: out, err: out, **@platform.spawn_options)
       @lock.synchronize { @live << pid }
       waiter = Process.detach(pid)
       timed_out = waiter.join(timeout).nil?
-      # A timed-out run, and anything a finished run left behind (a server, a forked worker), must not outlive it.
-      kill_group(pid)
+      # A timed-out run, and (where the platform allows) anything a finished run left behind, must not outlive it.
+      kill_group(pid) if timed_out || @platform.stop_leftovers?
       st = waiter.value
       @lock.synchronize { @live.delete(pid) }
       status = if timed_out then :timeout
@@ -78,25 +80,12 @@ module Mutaruby
       env
     end
 
-    # SIGTERM to the whole group, up to kill_grace seconds to exit, then SIGKILL.
+    # Stop the whole tree gracefully, give it up to kill_grace seconds, then force it.
     def kill_group(pid)
-      signal_group('TERM', pid)
+      @platform.stop_tree(pid, graceful: true)
       deadline = monotonic + @kill_grace
-      sleep POLL while monotonic < deadline && alive?(pid)
-      signal_group('KILL', pid)
-    end
-
-    def signal_group(sig, pid)
-      Process.kill(sig, -pid)
-    rescue Errno::ESRCH, Errno::EPERM
-      # the group is already gone
-    end
-
-    def alive?(pid)
-      Process.kill(0, -pid)
-      true
-    rescue Errno::ESRCH, Errno::EPERM
-      false
+      sleep POLL while monotonic < deadline && @platform.alive?(pid)
+      @platform.stop_tree(pid, graceful: false)
     end
 
     def tail(bytes)

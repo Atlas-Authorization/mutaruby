@@ -8,7 +8,8 @@ class CLITest < Minitest::Test
   include TestHelpers
 
   GOLDEN = File.expand_path('../golden', __dir__)
-  KILL_1_MINUS_2 = "! grep -q '1 - 2' lib/a.rb"
+  def killer = kill_if('1 - 2')
+  def ok = rb('exit 0')
 
   def cli(*args)
     out = StringIO.new
@@ -111,7 +112,7 @@ class CLITest < Minitest::Test
     with_project('lib/a.rb' => "X = 1 + 2\n") do |root|
       json = File.join(root, '..', 'out.json')
       xml = File.join(root, '..', 'out.xml')
-      code, out, err = cli('-C', root, '-t', KILL_1_MINUS_2, '-q', '-j', '2', '--json', json, '--junit', xml,
+      code, out, err = cli('-C', root, '-t', killer, '-q', '-j', '2', '--json', json, '--junit', xml,
                            '--fail-under', '50', '--suggest-ignore')
       assert_equal 1, code
       assert out.start_with?('Surviving mutants (not detected by the test command):')
@@ -124,17 +125,17 @@ class CLITest < Minitest::Test
       assert_equal %w[literal-int], stubs.map { |h| h['operator'] }.uniq
       assert_equal 1, JSON.parse(File.read(json))['counts']['killed']
       assert File.read(xml).start_with?('<?xml')
-      assert_equal [0, ''], cli('-C', root, '-t', KILL_1_MINUS_2, '-q', '--fail-under', '16.6').values_at(0, 2)
-      assert_equal 1, cli('-C', root, '-t', KILL_1_MINUS_2, '-q', '--fail-under', '16.7').first
-      assert_equal [0, ''], cli('-C', root, '-t', KILL_1_MINUS_2, '-q').values_at(0, 2)
+      assert_equal [0, ''], cli('-C', root, '-t', killer, '-q', '--fail-under', '16.6').values_at(0, 2)
+      assert_equal 1, cli('-C', root, '-t', killer, '-q', '--fail-under', '16.7').first
+      assert_equal [0, ''], cli('-C', root, '-t', killer, '-q').values_at(0, 2)
     end
   end
 
   def test_score_equal_to_fail_under_passes
     with_project('lib/a.rb' => "X = 1 + 2\n") do |root|
-      code, _, err = cli('-C', root, '-t', 'false', '--operators', 'literal-int', '-q', '--fail-under', '100')
+      code, _, err = cli('-C', root, '-t', rb('exit 1'), '--operators', 'literal-int', '-q', '--fail-under', '100')
       assert_equal [2, true], [code, err.include?('UNMUTATED')]
-      code, _, err = cli('-C', root, '-t', "! grep -q '1 - 2' lib/a.rb", '--operators', 'arithmetic', '-q',
+      code, _, err = cli('-C', root, '-t', killer, '--operators', 'arithmetic', '-q',
                          '--fail-under', '100')
       assert_equal [0, ''], [code, err]
     end
@@ -142,45 +143,45 @@ class CLITest < Minitest::Test
 
   def test_no_mutants_never_fails_the_score
     with_project('lib/a.rb' => "X = 1\n") do |root|
-      assert_equal [0, ''], cli('-C', root, '-t', 'true', '-q', '--fail-under', '50', 'nothing.rb').values_at(0, 2)
+      assert_equal [0, ''], cli('-C', root, '-t', ok, '-q', '--fail-under', '50', 'nothing.rb').values_at(0, 2)
     end
   end
 
   def test_suggest_without_survivors_prints_nothing
     with_project('lib/a.rb' => "X = 1 + 2\n") do |root|
-      code, _, err = cli('-C', root, '-t', KILL_1_MINUS_2, '-q', '--operators', 'arithmetic', '--suggest-ignore')
+      code, _, err = cli('-C', root, '-t', killer, '-q', '--operators', 'arithmetic', '--suggest-ignore')
       assert_equal [0, ''], [code, err]
     end
   end
 
   def test_progress_goes_to_stderr
     with_project('lib/a.rb' => "X = 1 + 2\n") do |root|
-      _, _, err = cli('-C', root, '-t', KILL_1_MINUS_2, '-j', '1', '--operators', 'arithmetic')
+      _, _, err = cli('-C', root, '-t', killer, '-j', '1', '--operators', 'arithmetic')
       assert_equal ".\n", err
     end
   end
 
   def test_verbose_lists_timeouts
     with_project('lib/a.rb' => "X = 1 + 2\n") do |root|
-      cmd = "if grep -q '1 - 2' lib/a.rb; then sleep 30; fi"
-      _, out, = cli('-C', root, '-t', cmd, '-q', '--operators', 'arithmetic', '--timeout', '0.3', '-v')
+      cmd = rb('sleep 30 if File.read("lib/a.rb").include?("1 - 2")')
+      _, out, = cli('-C', root, '-t', cmd, '-q', '--operators', 'arithmetic', '--timeout', '1', '-v')
       assert_includes out, "  timeout: lib/a.rb:1 arithmetic: + => -\n"
-      _, out, = cli('-C', root, '-t', cmd, '-q', '--operators', 'arithmetic', '--timeout', '0.3')
+      _, out, = cli('-C', root, '-t', cmd, '-q', '--operators', 'arithmetic', '--timeout', '1')
       refute_includes out, 'timeout: lib'
     end
   end
 
   def test_json_to_stdout_moves_the_summary_to_stderr
     with_project('lib/a.rb' => "X = 1 + 2\n") do |root|
-      code, out, err = cli('-C', root, '-t', 'exit 0', '-q', '--json', '-', '--operators', 'arithmetic')
+      code, out, err = cli('-C', root, '-t', ok, '-q', '--json', '-', '--operators', 'arithmetic')
       assert_equal 0, code
       assert_equal 1, JSON.parse(out)['counts']['survived']
       assert err.start_with?('Surviving mutants')
-      code, out, err = cli('-C', root, '-t', 'exit 0', '-q', '--junit', '-', '--operators', 'arithmetic')
+      code, out, err = cli('-C', root, '-t', ok, '-q', '--junit', '-', '--operators', 'arithmetic')
       assert_equal 0, code
       assert out.start_with?('<?xml')
       assert err.start_with?('Surviving mutants')
-      _, out, err = cli('-C', root, '-t', 'exit 0', '-q', '--operators', 'arithmetic')
+      _, out, err = cli('-C', root, '-t', ok, '-q', '--operators', 'arithmetic')
       assert out.start_with?('Surviving mutants')
       assert_equal '', err
     end
@@ -188,7 +189,7 @@ class CLITest < Minitest::Test
 
   def test_baseline_failure_exits_2
     with_project('lib/a.rb' => "X = 1\n") do |root|
-      code, out, err = cli('-C', root, '-t', 'exit 4', '-q')
+      code, out, err = cli('-C', root, '-t', rb('exit 4'), '-q')
       assert_equal [2, ''], [code, out]
       assert err.start_with?('mutaruby: the test command fails on the UNMUTATED code (exit 4)')
     end
@@ -198,7 +199,7 @@ class CLITest < Minitest::Test
     ign = "- file: lib/a.rb\n  operator: arithmetic\n  line: X = 1 + 2\n  reason: was equivalent once\n" \
           "- file: lib/a.rb\n  operator: arithmetic\n  line: Y = 3 + 4\n  reason: this one too\n"
     with_project('lib/a.rb' => "X = 1 + 2\nY = 3 + 4\n", '.mutaruby-ignore.yml' => ign) do |root|
-      cmd = "! grep -q ' - ' lib/a.rb"
+      cmd = kill_if(' - ')
       code, out, err = cli('-C', root, '-t', cmd, '-q')
       assert_equal 0, code, err
       assert_includes out, 'STALE ignore entry'
@@ -220,7 +221,7 @@ class CLITest < Minitest::Test
       Mutaruby::Splicer.singleton_class.alias_method(:real_splice, :splice)
       Mutaruby::Splicer.define_singleton_method(:splice) { |*| raise Mutaruby::SpliceError, 'boom' }
       begin
-        assert_equal [2, '', "mutaruby: boom\n"], cli('-C', root, '-t', 'true', '--list')
+        assert_equal [2, '', "mutaruby: boom\n"], cli('-C', root, '-t', ok, '--list')
       ensure
         Mutaruby::Splicer.singleton_class.alias_method(:splice, :real_splice)
       end
@@ -229,6 +230,7 @@ class CLITest < Minitest::Test
 
   # Ctrl-C: in-flight runs are killed and the exit status is 130.
   def test_interrupt
+    posix_only! # signals to another process
     with_project('lib/a.rb' => "X = 1 + 2\n") do |root|
       cmd = '[ "$MUTARUBY_MUTANT_ID" = 0 ] && kill -INT $PPID; sleep 0.2'
       code, _, err = cli('-C', root, '-t', cmd, '-q', '-j', '1')

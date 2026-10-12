@@ -5,7 +5,7 @@ require_relative '../test_helper'
 class RunnerTest < Minitest::Test
   include TestHelpers
 
-  LIB = { 'lib/a.rb' => "# é\nX = 1 + 2\n" }.freeze
+  LIB = { 'lib/a.rb' => "# é\r\nX = 1 + 2\n" }.freeze
   TWO = { 'lib/a.rb' => "A = 1\n", 'lib/b.rb' => "B = 7\n" }.freeze
 
   def run_on(root, command, out: StringIO.new, **kw)
@@ -18,8 +18,13 @@ class RunnerTest < Minitest::Test
 
   # Records, per run, what the test command saw: every file of the project and the per-mutant variables.
   def recorder(log)
-    "id=${MUTARUBY_MUTANT_ID:-base}; cat lib/*.rb > #{log}/$id.src; echo \"$MUTARUBY_FILE|$MUTARUBY\" > #{log}/$id.env"
+    rb(%(id = ENV.fetch("MUTARUBY_MUTANT_ID", "base")
+         File.binwrite("#{log}/\#{id}.src", Dir["lib/*.rb"].sort.map { |f| File.binread(f) }.join)
+         File.write("#{log}/\#{id}.env", "\#{ENV["MUTARUBY_FILE"]}|\#{ENV["MUTARUBY"]}\\n")))
   end
+
+  def killer = kill_if('1 - 2')
+  def ok = rb('exit 0')
 
   # A private TMPDIR, so the sandboxes a run creates can be counted.
   def with_tmpdir
@@ -28,7 +33,7 @@ class RunnerTest < Minitest::Test
     end
   end
 
-  def sandboxes_in(tmp) = Dir.glob(File.join(tmp, 'mutaruby-*'))
+  def sandboxes_in(tmp) = Dir.glob(File.join(tmp, "#{sandbox_prefix}*"))
 
   def test_options_defaults
     o = Mutaruby::Runner::Options.build
@@ -54,10 +59,10 @@ class RunnerTest < Minitest::Test
   def test_baseline_must_pass
     with_tmpdir do |tmp|
       with_project(LIB) do |root|
-        err = assert_raises(Mutaruby::BaselineFailed) { run_on(root, 'echo suite-output; exit 3') }
+        cmd = rb('puts "suite-output"; exit 3')
+        err = assert_raises(Mutaruby::BaselineFailed) { run_on(root, cmd) }
         assert_equal "the test command fails on the UNMUTATED code (exit 3); every mutant would count as killed, so " \
-                     "nothing would be measured.\ncommand: echo suite-output; exit 3\n--- output (tail) ---\n" \
-                     "suite-output\n", err.message
+                     "nothing would be measured.\ncommand: #{cmd}\n--- output (tail) ---\nsuite-output\n", err.message
         assert_kind_of Mutaruby::Error, err
         assert_empty sandboxes_in(tmp)
       end
@@ -87,7 +92,7 @@ class RunnerTest < Minitest::Test
 
   def test_verdicts_follow_the_exit_status
     with_project(LIB) do |root|
-      r = run_on(root, "! grep -q '1 - 2' lib/a.rb")
+      r = run_on(root, killer)
       st = statuses(r)
       assert_equal :killed, st['+ => -']
       assert_equal :survived, st['1 => 0']
@@ -100,7 +105,7 @@ class RunnerTest < Minitest::Test
       assert_equal [], r.stale
       assert_equal [], r.warnings
       assert_equal root, r.root
-      assert_equal "! grep -q '1 - 2' lib/a.rb", r.command
+      assert_equal killer, r.command
       assert_operator r.seconds, :>, 0
       assert_operator r.seconds, :<, 60
       assert_operator r.baseline_seconds, :>, 0
@@ -111,7 +116,7 @@ class RunnerTest < Minitest::Test
   def test_relative_root
     with_project(LIB) do |root|
       Dir.chdir(root) do
-        r = run_on('.', 'true', operators: ['arithmetic'])
+        r = run_on('.', ok, operators: ['arithmetic'])
         assert_equal Dir.pwd, r.root
         assert_equal 1, r.outcomes.size
       end
@@ -123,7 +128,8 @@ class RunnerTest < Minitest::Test
   def test_every_run_is_a_fresh_process
     with_project(LIB) do |root|
       Dir.mktmpdir do |log|
-        r = run_on(root, "echo \"$$ ${MUTARUBY_MUTANT_ID:-base}\" >> #{log}/pids; exit 0", jobs: 3)
+        cmd = rb(%(File.open("#{log}/pids", "a") { |f| f.puts "\#{Process.pid} \#{ENV.fetch("MUTARUBY_MUTANT_ID", "base")}" }))
+        r = run_on(root, cmd, jobs: 3)
         lines = File.readlines(File.join(log, 'pids')).map(&:split)
         assert_equal r.outcomes.size + 1, lines.size
         assert_equal lines.size, lines.map(&:first).uniq.size
@@ -134,28 +140,28 @@ class RunnerTest < Minitest::Test
 
   # Regression: the user's files are never written, whatever the test command does.
   def test_original_files_are_never_touched
-    with_project(LIB.merge('test/t.sh' => "echo junk >> lib/a.rb\nexit 1\n")) do |root|
+    with_project(LIB) do |root|
       before = snapshot(root)
-      assert_raises(Mutaruby::BaselineFailed) { run_on(root, 'sh test/t.sh') }
-      run_on(root, "grep -q '1 + 2' lib/a.rb && echo x >> lib/a.rb")
+      assert_raises(Mutaruby::BaselineFailed) { run_on(root, rb('File.open("lib/a.rb", "a") { |f| f.puts "junk" }; exit 1')) }
+      run_on(root, rb('File.open("lib/a.rb", "a") { |f| f.puts "x" } if File.read("lib/a.rb").include?("1 + 2")'))
       assert_equal before, snapshot(root)
     end
   end
 
   def test_timeouts_are_kills_reported_separately
     with_project(LIB) do |root|
-      r = run_on(root, "if grep -q '1 - 2' lib/a.rb; then sleep 30; fi; exit 0", timeout: 0.3)
+      r = run_on(root, rb('sleep 30 if File.read("lib/a.rb").include?("1 - 2")'), timeout: 1)
       assert_equal :timeout, statuses(r)['+ => -']
       assert_equal 1, r.count(:timeout)
       assert_equal 1, r.killed
-      assert_in_delta 0.3, r.timeout
+      assert_in_delta 1, r.timeout
     end
   end
 
   # The default timeout is the baseline time x factor + 5 seconds, rounded up.
   def test_default_timeout_comes_from_the_baseline
     with_project(LIB) do |root|
-      r = run_on(root, '[ -n "$MUTARUBY_MUTANT_ID" ] || sleep 0.4', operators: ['arithmetic'], timeout_factor: 2.5)
+      r = run_on(root, rb('sleep 0.4 unless ENV["MUTARUBY_MUTANT_ID"]'), operators: ['arithmetic'], timeout_factor: 2.5)
       assert_operator r.baseline_seconds, :>=, 0.4
       assert_equal ((r.baseline_seconds * 2.5) + 5).ceil, r.timeout
       assert_kind_of Integer, r.timeout
@@ -175,13 +181,13 @@ class RunnerTest < Minitest::Test
         reason: "wrong: this one is killed"
     YAML
     with_project(LIB.merge('.mutaruby-ignore.yml' => ign)) do |root|
-      r = run_on(root, "! grep -q '1 - 2' lib/a.rb")
+      r = run_on(root, killer)
       assert_equal :equivalent, statuses(r)['1 => 0']
       assert_equal 'pretend this is equivalent', r.outcomes.find { |o| o.status == :equivalent }.ignore.reason
       assert_equal :killed, statuses(r)['+ => -']
       assert_equal 1, r.count(:equivalent)
       assert_equal ['arithmetic'], r.stale.map(&:operator)
-      partial = run_on(root, "! grep -q '1 - 2' lib/a.rb", shard: [1, 2])
+      partial = run_on(root, killer, shard: [1, 2])
       assert_equal [], partial.stale
       refute partial.complete
     end
@@ -192,12 +198,12 @@ class RunnerTest < Minitest::Test
           "- file: lib/a.rb\n  operator: arithmetic\n  line: gone\n  reason: r\n"
     with_project(LIB.merge('ign.yml' => two)) do |root|
       path = File.join(root, 'ign.yml')
-      err = assert_raises(Mutaruby::Error) { run_on(root, 'true', ignore_file: path) }
+      err = assert_raises(Mutaruby::Error) { run_on(root, ok, ignore_file: path) }
       stale = 'STALE (the line is no longer in the file; re-review or remove the entry): #'
       assert_equal "ignore file #{path}:\n  #{stale}1 lib/a.rb arithmetic \"nope\"\n  #{stale}2 lib/a.rb arithmetic \"gone\"",
                    err.message
       missing = File.join(root, 'missing.yml')
-      err = assert_raises(Mutaruby::Error) { run_on(root, 'true', ignore_file: missing) }
+      err = assert_raises(Mutaruby::Error) { run_on(root, ok, ignore_file: missing) }
       assert_equal "ignore file not found: #{missing}", err.message
     end
   end
@@ -205,14 +211,14 @@ class RunnerTest < Minitest::Test
   def test_explicit_ignore_file_overrides_the_default
     ign = "- file: lib/a.rb\n  operator: arithmetic\n  line: X = 1 + 2\n  reason: r\n"
     with_project(LIB.merge('.mutaruby-ignore.yml' => "- nope\n", 'other.yml' => ign)) do |root|
-      r = run_on(root, 'true', operators: ['arithmetic'], ignore_file: File.join(root, 'other.yml'))
+      r = run_on(root, ok, operators: ['arithmetic'], ignore_file: File.join(root, 'other.yml'))
       assert_equal [:equivalent], r.outcomes.map(&:status)
     end
   end
 
   def test_plan_applies_filters_and_reports_parse_errors
     with_project(LIB.merge('lib/bad.rb' => "def (\n", 'lib/z.rb' => "Z = 5\n")) do |root|
-      runner = Mutaruby::Runner.new(options(root: root, command: 'true', operators: ['literal-int'], lines: [Mutaruby::Selection.parse_line_spec('lib/z.rb:1')]),
+      runner = Mutaruby::Runner.new(options(root: root, command: ok, operators: ['literal-int'], lines: [Mutaruby::Selection.parse_line_spec('lib/z.rb:1')]),
                                     out: StringIO.new)
       plan = runner.plan
       assert_equal ['lib/a.rb', 'lib/bad.rb', 'lib/z.rb'], plan[:files]
@@ -234,7 +240,7 @@ class RunnerTest < Minitest::Test
         verbose = $VERBOSE
         $VERBOSE = nil
         Encoding.default_external = Encoding::ISO_8859_1
-        plan = Mutaruby::Runner.new(options(root: root, command: 'true'), out: StringIO.new).plan
+        plan = Mutaruby::Runner.new(options(root: root, command: ok), out: StringIO.new).plan
       ensure
         Encoding.default_external = old
         $VERBOSE = verbose
@@ -246,20 +252,20 @@ class RunnerTest < Minitest::Test
 
   def test_progress_marks
     with_project(LIB) do |root|
-      plan = Mutaruby::Runner.new(options(root: root, command: 'true'), out: StringIO.new).plan
+      plan = Mutaruby::Runner.new(options(root: root, command: ok), out: StringIO.new).plan
       m3 = plan[:mutations][3]
       ign = [{ 'file' => 'lib/a.rb', 'operator' => m3.operator, 'line' => m3.line_text, 'mutation' => m3.change,
                'reason' => 'r' }].to_yaml
       File.write(File.join(root, '.mutaruby-ignore.yml'), ign)
-      cmd = 'case "$MUTARUBY_MUTANT_ID" in 0) exit 1;; 1) sleep 30;; esac; exit 0'
+      cmd = rb('case ENV["MUTARUBY_MUTANT_ID"] when "0" then exit 1 when "1" then sleep 30 end')
       out = Recorder.new
-      r = run_on(root, cmd, out: out, progress: true, jobs: 1, timeout: 0.3)
+      r = run_on(root, cmd, out: out, progress: true, jobs: 1, timeout: 1)
       marks = ".T#{'S' * (r.outcomes.size - 2)}"
       marks[3] = 'e'
       assert_equal "#{marks}\n", out.string
       assert_equal r.outcomes.size, out.flushes
       quiet = Recorder.new
-      run_on(root, cmd, out: quiet, progress: false, jobs: 1, timeout: 0.3)
+      run_on(root, cmd, out: quiet, progress: false, jobs: 1, timeout: 1)
       assert_equal '', quiet.string
     end
   end
@@ -267,7 +273,7 @@ class RunnerTest < Minitest::Test
   def test_no_newline_without_mutants
     with_project(LIB) do |root|
       out = StringIO.new
-      r = run_on(root, 'true', out: out, progress: true, patterns: ['nothing.rb'])
+      r = run_on(root, ok, out: out, progress: true, patterns: ['nothing.rb'])
       assert_equal '', out.string
       assert_empty r.outcomes
       assert_nil r.score
@@ -278,7 +284,7 @@ class RunnerTest < Minitest::Test
   def test_sandboxes_per_worker
     with_tmpdir do |tmp|
       with_project(LIB) do |root|
-        cmd = "ls -d #{tmp}/mutaruby-* | wc -l | tr -d ' ' > #{tmp}/count-${MUTARUBY_MUTANT_ID:-base}"
+        cmd = rb(%(File.write("#{tmp}/count-\#{ENV.fetch("MUTARUBY_MUTANT_ID", "base")}", Dir.glob("#{tmp}/#{sandbox_prefix}*").size.to_s)))
         { 0 => 1, 1 => 1, 2 => 2, 5 => 5, 50 => 6 }.each do |jobs, want|
           r = run_on(root, cmd, jobs: jobs)
           assert_equal 6, r.outcomes.size
@@ -293,9 +299,10 @@ class RunnerTest < Minitest::Test
 
   def test_copy_excludes_apply_to_every_sandbox
     with_project(LIB.merge('tmp/big' => 'x')) do |root|
-      r = run_on(root, '[ ! -e tmp ]', jobs: 3, copy_excludes: ['tmp'])
+      absent = rb('exit(File.exist?("tmp") ? 1 : 0)')
+      r = run_on(root, absent, jobs: 3, copy_excludes: ['tmp'])
       assert_equal [:survived], r.outcomes.map(&:status).uniq
-      assert_raises(Mutaruby::BaselineFailed) { run_on(root, '[ ! -e tmp ]') }
+      assert_raises(Mutaruby::BaselineFailed) { run_on(root, absent) }
     end
   end
 
@@ -303,7 +310,7 @@ class RunnerTest < Minitest::Test
   def test_interrupt_stops_everything
     with_tmpdir do |tmp|
       with_project(LIB) do |root|
-        cmd = "[ -z \"$MUTARUBY_MUTANT_ID\" ] || { echo $$ >> #{tmp}/pids; sleep 30; }"
+        cmd = rb(%(exit 0 unless ENV["MUTARUBY_MUTANT_ID"]; File.open("#{tmp}/pids", "a") { |f| f.puts Process.pid }; sleep 30))
         t = Thread.new { run_on(root, cmd, jobs: 2) }
         t.report_on_exception = false
         pids = File.join(tmp, 'pids')

@@ -14,7 +14,7 @@ class CalcE2ETest < Minitest::Test
   EXE = File.expand_path('../../exe/mutaruby', __dir__)
 
   def run_cli(*args)
-    Open3.capture3(RbConfig.ruby, EXE, '-C', ROOT, '-t', "#{RbConfig.ruby} test/test_calc.rb", '-q', *args)
+    Open3.capture3(RbConfig.ruby, EXE, '-C', ROOT, '-t', %("#{RbConfig.ruby}" test/test_calc.rb), '-q', *args)
   end
 
   def by(report, operator, line, change = nil)

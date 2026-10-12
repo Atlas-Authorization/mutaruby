@@ -97,7 +97,7 @@ module Mutaruby
         @errors << "#{@path}: cannot parse (not valid #{@src.encoding}); skipped"
         return []
       end
-      ast = Parsing.parse(@path, @src)
+      ast = Parsing.parse(@path, normalize_newlines)
       @out = []
       @seen = {}
       @scope = []   # namespace names ("Foo", "Bar")
@@ -107,6 +107,28 @@ module Mutaruby
     rescue Parser::SyntaxError => e
       @errors << "#{@path}: cannot parse (#{e}); skipped"
       []
+    end
+
+    # `parser` reads every "\r\n" as "\n", so its offsets count one character per CRLF line break. The source is
+    # parsed in that form; @crlf records where (in parser offsets) a "\n" stands for "\r\n" in the file, so every
+    # splice is made at the file's own character offsets and the file keeps its line endings.
+    def normalize_newlines
+      @crlf = {}
+      norm = @src.gsub("\r\n") do
+        @crlf[$~.begin(0) - @crlf.size] = true
+        "\n"
+      end
+      @newline = @crlf.empty? ? "\n" : "\r\n"
+      norm
+    end
+
+    def original_offset(pos)
+      pos + @crlf.count { |q, _| q < pos }
+    end
+
+    # A slice of the parsed source as it reads in the file.
+    def with_crlf(slice, start)
+      slice.each_char.with_index.map { |c, i| @crlf[start + i] ? "\r\n" : c }.join
     end
 
     # lineno => 1-based index of that line among the identical (stripped) lines of the file.
@@ -130,7 +152,9 @@ module Mutaruby
       line = @lines[lineno - 1]
       return if line.include?(DISABLE_MARK)
 
-      text = Splicer.splice(@src, range.begin_pos, range.end_pos, orig, repl)
+      b = range.begin_pos
+      text = Splicer.splice(@src, original_offset(b), original_offset(range.end_pos), with_crlf(orig, b),
+                            repl.gsub("\n", @newline))
       return if @seen[text]
 
       @seen[text] = true

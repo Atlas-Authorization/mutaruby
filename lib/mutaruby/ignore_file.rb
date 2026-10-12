@@ -38,7 +38,7 @@ module Mutaruby
     attr_reader :entries, :path
 
     def self.load(path)
-      new(YAML.safe_load(File.read(path)), path: path)
+      new(YAML.safe_load(File.read(path, encoding: 'UTF-8')), path: path)
     rescue Psych::SyntaxError => e
       raise Invalid, "#{path}: not valid YAML (#{e})"
     end

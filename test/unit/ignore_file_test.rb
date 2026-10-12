@@ -81,6 +81,17 @@ class IgnoreFileTest < Minitest::Test
       f = I.load(p)
       assert_equal [['lib/x.rb', 2, 'r']], f.entries.map { |e| [e.file, e.occurrence, e.reason] }
       assert_equal p, f.path
+      File.binwrite(p, "- file: a\n  operator: comparison\n  line: x\n  reason: caf\xC3\xA9\n")
+      verbose = $VERBOSE
+      old = Encoding.default_external
+      $VERBOSE = nil
+      Encoding.default_external = Encoding::ISO_8859_1
+      begin
+        assert_equal "caf\u00e9", I.load(p).entries.first.reason
+      ensure
+        Encoding.default_external = old
+        $VERBOSE = verbose
+      end
       File.write(p, "- [unclosed\n")
       err = assert_raises(I::Invalid) { I.load(p) }
       assert_match(/\A#{Regexp.escape(p)}: not valid YAML \(.*line 1 column 3\)\z/, err.message)

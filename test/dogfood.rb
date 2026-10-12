@@ -11,6 +11,7 @@ TESTS = {
   'lib/mutaruby/selection.rb' => %w[selection runner cli],
   'lib/mutaruby/sandbox.rb' => %w[sandbox runner],
   'lib/mutaruby/command.rb' => %w[command runner],
+  'lib/mutaruby/platform.rb' => %w[platform command sandbox],
   'lib/mutaruby/runner.rb' => %w[runner cli],
   'lib/mutaruby/reporters.rb' => %w[reporters cli],
   'lib/mutaruby/cli.rb' => %w[cli]

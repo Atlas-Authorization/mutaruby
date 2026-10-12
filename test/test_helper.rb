@@ -6,8 +6,33 @@ require 'minitest/autorun'
 require 'tmpdir'
 require 'fileutils'
 require 'stringio'
+require 'rbconfig'
 
 module TestHelpers
+  RUBY = %("#{RbConfig.ruby}" --disable-gems)
+  SCRIPTS = Dir.mktmpdir('tscripts')
+  Minitest.after_run { FileUtils.rm_rf(SCRIPTS) }
+
+  # A test command that runs `code` with Ruby: portable between /bin/sh and cmd.exe, whose quoting rules differ.
+  def rb(code)
+    path = File.join(SCRIPTS, "c#{code.unpack1('H*')[0, 40]}#{code.sum}#{code.size}.rb")
+    File.write(path, code)
+    %(#{RUBY} "#{path}")
+  end
+
+  # A test command that fails (kills the mutant) when `file` contains `text`.
+  def kill_if(text, file = 'lib/a.rb')
+    rb("exit(File.read(#{file.inspect}).include?(#{text.inspect}) ? 1 : 0)")
+  end
+
+  def windows? = Mutaruby::Platform.windows?
+
+  def posix_only!
+    skip 'POSIX only' if windows?
+  end
+
+  def sandbox_prefix = Mutaruby::Platform.current.temp_prefix
+
   # Mutants of a snippet as [operator, orig, repl] triples.
   def muts(src, operators: nil)
     Mutaruby::Generator.new(src, path: 'snippet.rb', operators: operators&.to_set).mutations
@@ -23,12 +48,12 @@ module TestHelpers
 
   # Builds a throwaway project: { "lib/a.rb" => "..." }. Yields the root and removes it afterwards.
   def with_project(files)
-    Dir.mktmpdir('mrtest-') do |dir|
+    Dir.mktmpdir('tproj-') do |dir|
       root = File.join(dir, 'proj')
       files.each do |rel, body|
         path = File.join(root, rel)
         FileUtils.mkdir_p(File.dirname(path))
-        File.write(path, body)
+        File.binwrite(path, body)
       end
       yield root
     end

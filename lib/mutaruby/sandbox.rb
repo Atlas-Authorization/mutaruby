@@ -3,6 +3,7 @@
 require 'fileutils'
 require 'find'
 require 'tmpdir'
+require_relative 'platform'
 
 module Mutaruby
   # A private copy of the project. Every test-command run happens inside one, so the user's files are never written:
@@ -12,16 +13,35 @@ module Mutaruby
   # is written back before the next mutant.
   class Sandbox
     DEFAULT_EXCLUDES = %w[.git coverage].freeze
-    PREFIX = 'mutaruby-'
+    # Writes and deletes are retried this many times, RETRY_DELAY seconds apart, while the file is locked (on Windows a
+    # process that is still exiting, or a virus scanner, can hold it for a moment).
+    RETRIES = 10
+    RETRY_DELAY = 0.1
+    LOCKED = [Errno::EACCES, Errno::EBUSY, Errno::EPERM].freeze
+
+    # Runs the block, retrying while it raises one of the LOCKED errors.
+    def self.retrying(tries: RETRIES, delay: RETRY_DELAY)
+      attempt = 1
+      begin
+        yield
+      rescue *LOCKED
+        raise if attempt >= tries
+
+        attempt += 1
+        sleep delay
+        retry
+      end
+    end
 
     attr_reader :dir
 
-    def initialize(root, excludes: [])
+    def initialize(root, excludes: [], platform: Platform.current)
       # The real path: Find does not descend into a symlink, so a root reached through one (/tmp on macOS) would
       # otherwise be copied as an empty directory.
       @root = File.realpath(root)
       @excludes = DEFAULT_EXCLUDES + excludes
-      @base = Dir.mktmpdir(PREFIX)
+      @prefix = platform.temp_prefix
+      @base = Dir.mktmpdir(@prefix)
       @tmp_parent = File.realpath(File.dirname(@base))
       @dir = File.join(@base, File.basename(@root))
       copy_tree
@@ -35,15 +55,16 @@ module Mutaruby
     def with_file(rel, text, original)
       target = path(rel)
       begin
-        File.binwrite(target, text)
+        Sandbox.retrying { File.binwrite(target, text) }
         yield
       ensure
-        File.binwrite(target, original)
+        Sandbox.retrying { File.binwrite(target, original) }
       end
     end
 
+    # Removes the sandbox. Unlike rm_rf, this does not silently leave a locked file behind: it retries, then raises.
     def cleanup
-      FileUtils.rm_rf(@base)
+      Sandbox.retrying { FileUtils.rm_r(@base) if File.exist?(@base) }
     end
 
     private
@@ -58,8 +79,16 @@ module Mutaruby
     # A sandbox directory (this one or another worker's). When the temporary directory lies inside the project (for
     # example TMPDIR=./tmp), copying it would copy the sandbox into itself. Paths found under the real root are real.
     def sandbox?(path)
-      File.directory?(path) && File.basename(path).start_with?(PREFIX) &&
+      File.directory?(path) && File.basename(path).start_with?(@prefix) &&
         File.dirname(path) == @tmp_parent
+    end
+
+    # A symlink is copied as a symlink. Where that is not allowed (Windows without the symlink privilege), what it
+    # points to is copied instead; a dangling link is skipped.
+    def link(src, dest)
+      File.symlink(File.readlink(src), dest)
+    rescue NotImplementedError, Errno::EPERM, Errno::EACCES
+      FileUtils.cp_r(src, dest, dereference_root: true) if File.exist?(src)
     end
 
     def copy_tree
@@ -72,7 +101,7 @@ module Mutaruby
         dest = File.join(@dir, rel)
         st = File.lstat(src)
         if st.symlink?
-          File.symlink(File.readlink(src), dest)
+          link(src, dest)
         elsif st.directory?
           FileUtils.mkdir_p(dest)
         elsif st.file? # not sockets, FIFOs or devices: copying a FIFO would block

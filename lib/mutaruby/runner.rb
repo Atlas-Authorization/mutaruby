@@ -48,7 +48,8 @@ module Mutaruby
     def plan
       sel = selection
       files = sel.files
-      sources = files.to_h { |f| [f, File.read(File.join(@root, f), encoding: 'UTF-8')] }
+      # Bytes as they are (no newline conversion on Windows), read as UTF-8 whatever the default encoding.
+      sources = files.to_h { |f| [f, File.binread(File.join(@root, f)).force_encoding(Encoding::UTF_8)] }
       warnings = []
       all = files.flat_map do |f|
         g = Generator.new(sources[f], path: File.join(@root, f), rel: f, operators: @o.operators)
