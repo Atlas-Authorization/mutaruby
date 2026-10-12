@@ -33,6 +33,10 @@ module TestHelpers
 
   def sandbox_prefix = Mutaruby::Platform.current.temp_prefix
 
+  # A per-mutant timeout for tests where one mutant hangs: long enough for a normal run to finish even on a slow
+  # Windows runner (Ruby starts much more slowly there).
+  def hang_timeout = windows? ? 6 : 1
+
   # Mutants of a snippet as [operator, orig, repl] triples.
   def muts(src, operators: nil)
     Mutaruby::Generator.new(src, path: 'snippet.rb', operators: operators&.to_set).mutations
@@ -75,5 +79,28 @@ module TestHelpers
   def snapshot(root)
     Dir.glob('**/*', File::FNM_DOTMATCH, base: root).sort.reject { |f| File.directory?(File.join(root, f)) }
        .to_h { |f| [f, File.binread(File.join(root, f))] }
+  end
+end
+
+# CI watchdog (TEST_WATCHDOG=SECONDS): if one test runs longer than that, print its name and every thread's
+# backtrace, then exit, so a hang shows where it is instead of running into the job timeout.
+if (limit = ENV['TEST_WATCHDOG']&.to_f)
+  module TestWatchdog
+    def before_setup
+      $watchdog_test = [name, Process.clock_gettime(Process::CLOCK_MONOTONIC)]
+      super
+    end
+  end
+  Minitest::Test.prepend(TestWatchdog)
+  Thread.new do
+    loop do
+      sleep 1
+      test, started = $watchdog_test
+      next unless test && Process.clock_gettime(Process::CLOCK_MONOTONIC) - started > limit
+
+      warn "WATCHDOG: #{test} has run for more than #{limit}s"
+      Thread.list.each { |t| warn "#{t.inspect}\n  #{(t.backtrace || []).first(20).join("\n  ")}" }
+      exit!(3)
+    end
   end
 end

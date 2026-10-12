@@ -103,7 +103,7 @@ class CommandTest < Minitest::Test
     Dir.mktmpdir do |d|
       tree = rb('require "rbconfig"; pid = spawn(RbConfig.ruby, "-e", "sleep 30"); File.write("child.pid", pid.to_s); sleep 30')
       t0 = now
-      r = Mutaruby::Command.new(tree, root: d, kill_grace: 0.5).run(d, timeout: 1.5)
+      r = Mutaruby::Command.new(tree, root: d, kill_grace: 0.5).run(d, timeout: hang_timeout + 0.5)
       assert r.timeout?
       assert_equal :timeout, r.status
       refute r.passed?
@@ -190,8 +190,8 @@ class CommandTest < Minitest::Test
       @real.stop_tree(pid, graceful: graceful)
     end
 
-    def alive?(pid)
-      @calls << [:alive?]
+    def alive?(_pid, waiter)
+      @calls << [:alive?, waiter.class]
       @alive.shift || false
     end
   end
@@ -204,11 +204,11 @@ class CommandTest < Minitest::Test
       assert_equal [[:spawn_args, quick]], keep.calls, 'no tree stop after a normal exit when the platform says so'
       stop = FakePlatform.new(leftovers: true)
       Mutaruby::Command.new(quick, root: d, platform: stop).run(d)
-      assert_equal [[:spawn_args, quick], [:stop_tree, true], [:alive?], [:stop_tree, false]], stop.calls
+      assert_equal [[:spawn_args, quick], [:stop_tree, true], [:alive?, Process::Waiter], [:stop_tree, false]], stop.calls
       slow = FakePlatform.new(leftovers: false, alive: [true, true])
       r = Mutaruby::Command.new(rb('sleep 30'), root: d, platform: slow, kill_grace: 5).run(d, timeout: 0.2)
       assert r.timeout?
-      assert_equal [[:stop_tree, true], [:alive?], [:alive?], [:alive?], [:stop_tree, false]], slow.calls.drop(1)
+      assert_equal [[:stop_tree, true], [:alive?, Process::Waiter], [:alive?, Process::Waiter], [:alive?, Process::Waiter], [:stop_tree, false]], slow.calls.drop(1)
     end
   end
 

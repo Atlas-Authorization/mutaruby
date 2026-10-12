@@ -164,9 +164,9 @@ class CLITest < Minitest::Test
   def test_verbose_lists_timeouts
     with_project('lib/a.rb' => "X = 1 + 2\n") do |root|
       cmd = rb('sleep 30 if File.read("lib/a.rb").include?("1 - 2")')
-      _, out, = cli('-C', root, '-t', cmd, '-q', '--operators', 'arithmetic', '--timeout', '1', '-v')
+      _, out, = cli('-C', root, '-t', cmd, '-q', '--operators', 'arithmetic', '--timeout', hang_timeout.to_s, '-v')
       assert_includes out, "  timeout: lib/a.rb:1 arithmetic: + => -\n"
-      _, out, = cli('-C', root, '-t', cmd, '-q', '--operators', 'arithmetic', '--timeout', '1')
+      _, out, = cli('-C', root, '-t', cmd, '-q', '--operators', 'arithmetic', '--timeout', hang_timeout.to_s)
       refute_includes out, 'timeout: lib'
     end
   end

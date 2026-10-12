@@ -22,14 +22,14 @@ module Mutaruby
       @platform = platform
       @kill_grace = kill_grace
       @root = File.expand_path(root)
-      @live = []
+      @live = {} # pid => the thread reaping it
       @lock = Mutex.new
     end
 
     # Kills every run still in progress (used when mutaruby itself is interrupted: the runs live in their own process
     # groups, so a Ctrl-C in the terminal does not reach them).
     def kill_all
-      @lock.synchronize { @live.each { |pid| kill_group(pid) } }
+      @lock.synchronize { @live.each { |pid, waiter| kill_group(pid, waiter) } }
     end
 
     # dir: sandbox project dir. timeout: seconds (nil = none). capture: keep an output tail (for the baseline report).
@@ -50,11 +50,11 @@ module Mutaruby
       started = monotonic
       pid = Process.spawn(child_env(dir).merge(env), *@platform.spawn_args(@command),
                           chdir: dir, in: File::NULL, out: out, err: out, **@platform.spawn_options)
-      @lock.synchronize { @live << pid }
       waiter = Process.detach(pid)
+      @lock.synchronize { @live[pid] = waiter }
       timed_out = waiter.join(timeout).nil?
       # A timed-out run, and (where the platform allows) anything a finished run left behind, must not outlive it.
-      kill_group(pid) if timed_out || @platform.stop_leftovers?
+      kill_group(pid, waiter) if timed_out || @platform.stop_leftovers?
       st = waiter.value
       @lock.synchronize { @live.delete(pid) }
       status = if timed_out then :timeout
@@ -81,10 +81,10 @@ module Mutaruby
     end
 
     # Stop the whole tree gracefully, give it up to kill_grace seconds, then force it.
-    def kill_group(pid)
+    def kill_group(pid, waiter)
       @platform.stop_tree(pid, graceful: true)
       deadline = monotonic + @kill_grace
-      sleep POLL while monotonic < deadline && @platform.alive?(pid)
+      sleep POLL while monotonic < deadline && @platform.alive?(pid, waiter)
       @platform.stop_tree(pid, graceful: false)
     end
 

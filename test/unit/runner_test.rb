@@ -151,11 +151,11 @@ class RunnerTest < Minitest::Test
 
   def test_timeouts_are_kills_reported_separately
     with_project(LIB) do |root|
-      r = run_on(root, rb('sleep 30 if File.read("lib/a.rb").include?("1 - 2")'), timeout: 1)
+      r = run_on(root, rb('sleep 30 if File.read("lib/a.rb").include?("1 - 2")'), timeout: hang_timeout)
       assert_equal :timeout, statuses(r)['+ => -']
       assert_equal 1, r.count(:timeout)
       assert_equal 1, r.killed
-      assert_in_delta 1, r.timeout
+      assert_in_delta hang_timeout, r.timeout
     end
   end
 
@@ -260,13 +260,13 @@ class RunnerTest < Minitest::Test
       File.write(File.join(root, '.mutaruby-ignore.yml'), ign)
       cmd = rb('case ENV["MUTARUBY_MUTANT_ID"] when "0" then exit 1 when "1" then sleep 30 end')
       out = Recorder.new
-      r = run_on(root, cmd, out: out, progress: true, jobs: 1, timeout: 1)
+      r = run_on(root, cmd, out: out, progress: true, jobs: 1, timeout: hang_timeout)
       marks = ".T#{'S' * (r.outcomes.size - 2)}"
       marks[3] = 'e'
       assert_equal "#{marks}\n", out.string
       assert_equal r.outcomes.size, out.flushes
       quiet = Recorder.new
-      run_on(root, cmd, out: quiet, progress: false, jobs: 1, timeout: 1)
+      run_on(root, cmd, out: quiet, progress: false, jobs: 1, timeout: hang_timeout)
       assert_equal '', quiet.string
     end
   end

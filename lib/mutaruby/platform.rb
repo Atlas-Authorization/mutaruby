@@ -27,7 +27,8 @@ module Mutaruby
         # the group is already gone
       end
 
-      def alive?(pid)
+      # waiter: the thread reaping the run's leader (Process.detach); unused here, the group decides.
+      def alive?(pid, _waiter)
         Process.kill(0, -pid)
         true
       rescue Errno::ESRCH, Errno::EPERM
@@ -60,11 +61,10 @@ module Mutaruby
         @system.call('taskkill', '/T', *(graceful ? [] : ['/F']), '/PID', pid.to_s)
       end
 
-      def alive?(pid)
-        Process.kill(0, pid)
-        true
-      rescue Errno::ESRCH, Errno::EPERM
-        false
+      # While the thread reaping the command's process (Process.detach) runs, that process has not exited. (Signal 0
+      # is not a reliable liveness test on Windows: it can succeed for a process that has already exited.)
+      def alive?(_pid, waiter)
+        waiter.alive?
       end
     end
 

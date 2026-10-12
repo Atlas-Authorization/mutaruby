@@ -65,17 +65,21 @@ class PlatformTest < Minitest::Test
     assert_equal [['taskkill', '/T', '/F', '/PID', '7', { out: File::NULL, err: File::NULL }]], calls
   end
 
-  def test_windows_liveness_is_the_process
+  def test_windows_liveness_is_the_reaper_thread
     x = P::Windows.new
-    assert x.alive?(Process.pid)
-    refute x.alive?(dead_pid)
+    pid = Process.spawn(RbConfig.ruby, '--disable-gems', '-e', 'sleep 30')
+    waiter = Process.detach(pid)
+    assert x.alive?(pid, waiter)
+    Process.kill('KILL', pid)
+    waiter.join
+    refute x.alive?(pid, waiter)
   end
 
   def test_posix_liveness_is_the_process_group
     posix_only!
     x = P::Posix.new
-    assert x.alive?(Process.getpgrp)
-    refute x.alive?(dead_pid)
+    assert x.alive?(Process.getpgrp, nil)
+    refute x.alive?(dead_pid, nil)
   end
 
   def test_posix_stops_the_group
