@@ -291,7 +291,8 @@ class RunnerTest < Minitest::Test
           # retried: on Windows a virus scanner can hold a just-created file for a moment
           cmd = rb(%(path = "#{tmp}/count-#{jobs}-\#{ENV.fetch("MUTARUBY_MUTANT_ID", "base")}"
                      10.times { begin; File.write(path, #{count}); break; rescue SystemCallError; sleep 0.2; end }))
-          r = run_on(root, cmd, jobs: jobs)
+          # many Rubies starting at once are slow on a Windows runner; the default timeout is tuned for one
+          r = run_on(root, cmd, jobs: jobs, timeout: windows? ? 60 : nil)
           assert_equal [:survived], r.outcomes.map(&:status).uniq, "jobs=#{jobs}"
           assert_equal 6, r.outcomes.size
           assert_equal [jobs, 1].max, r.jobs
