@@ -69,13 +69,11 @@ module MutarubyProbe
       real.delete_prefix(@root) if real.start_with?(@root)
     end
 
-    # A file deleted since it was loaded has no real path: its directory's real path is used, or, with the directory
-    # gone too, the path as it was loaded.
+    # Ruby records required files by their real path already; a file deleted since it was loaded keeps that path.
     def real_path(path)
       File.realpath(path)
     rescue SystemCallError
-      dir = File.dirname(path)
-      File.directory?(dir) ? File.join(File.realpath(dir), File.basename(path)) : path
+      path
     end
 
     # Lines run after the last test (at_exit and after_run hooks) count as load-time lines too.

@@ -154,7 +154,7 @@ module Mutaruby
       begin
         @threads.each(&:join)
       rescue Interrupt
-        @threads.each(&:kill).each(&:join)
+        @threads.each(&:kill)
         raise
       end
       @out.puts if @o.progress && results.any?
