@@ -1,0 +1,50 @@
+name: Self-mutation
+
+# mutaruby mutation-tests its own code. The run is split into shards on separate runners and the reports are merged:
+# it passes when no mutant survives and every entry of .mutaruby-ignore.yml matches an equivalent mutant.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  shard:
+    name: Shard ${{ matrix.shard }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+          bundler-cache: true
+      - name: Mutate
+        run: >
+          bundle exec ruby exe/mutaruby -t "ruby -Ilib -Itest test/dogfood.rb" -j 4 -q
+          --shard ${{ matrix.shard }}/16 --json shard-${{ matrix.shard }}.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: shard-${{ matrix.shard }}
+          path: shard-${{ matrix.shard }}.json
+
+  merge:
+    needs: shard
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+          bundler-cache: true
+      - uses: actions/download-artifact@v4
+        with:
+          path: reports
+      - name: Merge and check
+        run: bundle exec ruby -Ilib script/merge-reports.rb .mutaruby-ignore.yml reports/*/shard-*.json
