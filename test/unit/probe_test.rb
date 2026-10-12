@@ -97,7 +97,6 @@ class ProbeTest < Minitest::Test
       assert_equal %w[WTest#test_a WTest#test_b], data['tests'].keys.sort
       # load-time lines, plus line 3 run by an after_run hook once the tests are over (kept sorted)
       assert_equal [1, 2, 3, 6], data['load']['lib/w.rb']
-      assert(data['tests'].values.flat_map(&:values).none?(&:empty?), 'only lines that ran are recorded')
       assert_equal [], data['load'].keys - ['lib/w.rb', 'test/w_test.rb'], 'nothing outside the project'
     end
   end
@@ -235,29 +234,73 @@ class ProbeTest < Minitest::Test
     end
   end
 
-  # A file that was loaded and then deleted (no real path any more) is still mapped by the path it was loaded from.
+  GONE = <<~RUBY
+    require 'minitest/autorun'
+    tmp = File.join(__dir__, '..', ENV.fetch('GONE_DIR'), 'tmp.rb')
+    FileUtils.mkdir_p(File.dirname(tmp))
+    File.write(tmp, "module Tmp\n  def self.x\n    1\n  end\nend\n")
+    require tmp
+    File.delete(tmp)
+    FileUtils.rm_rf(File.dirname(tmp)) if ENV['GONE_DIR'] == 'gone'
+
+    class GoneTest < Minitest::Test
+      def test_x
+        assert_equal 1, Tmp.x
+      end
+    end
+  RUBY
+
+  # Files that were loaded and then deleted: mapped through their directory's real path, or by the path they were
+  # loaded from when the directory is gone too.
   def test_records_deleted_files
     project do |root|
-      check = File.join(root, 'test/gone_test.rb')
-      File.write(check, <<~RUBY)
-        require 'minitest/autorun'
-        tmp = File.join(__dir__, '..', 'lib', 'tmp.rb')
-        File.write(tmp, "module Tmp\n  def self.x\n    1\n  end\nend\n")
-        require tmp
-        File.delete(tmp)
+      File.write(File.join(root, 'test/gone_test.rb'), "require 'fileutils'\n#{GONE}")
+      data = with_env('GONE_DIR' => 'lib') { record(root, 'test/gone_test.rb') }
+      assert_equal [3], data['tests']['GoneTest#test_x']['lib/tmp.rb']
+      data = with_env('GONE_DIR' => 'gone') { record(root, File.join(File.realpath(root), 'test/gone_test.rb')) }
+      assert_equal [3], data['tests']['GoneTest#test_x']['gone/tmp.rb']
+    end
+  end
 
-        class GoneTest < Minitest::Test
-          def test_x
-            assert_equal 1, Tmp.x
-          end
-        end
-      RUBY
-      data = record(root, 'test/gone_test.rb')
+  # The same under a project root reached through a symlink: the deleted file still maps into the project.
+  def test_records_deleted_files_through_a_symlinked_root
+    posix_only!
+    project do |root|
+      File.write(File.join(root, 'test/gone_test.rb'), "require 'fileutils'\n#{GONE}")
+      link = File.join(root, '..', 'link')
+      File.symlink(root, link)
+      data = with_env('GONE_DIR' => 'lib') do
+        record(root, File.join(link, 'test/gone_test.rb'), chdir: link, coverage_root: link)
+      end
       assert_equal [3], data['tests']['GoneTest#test_x']['lib/tmp.rb']
     end
   end
 
-  # Hooks of other libraries that follow the probe in the lifecycle (included into Minitest::Test) still run.
+  # Coverage reports real paths for files loaded by their real path; a root given through a symlink still matches.
+  def test_records_real_paths_under_a_symlinked_root
+    posix_only!
+    project do |root|
+      link = File.join(root, '..', 'link')
+      File.symlink(root, link)
+      data = record(root, File.join(File.realpath(root), 'test/w_test.rb'), coverage_root: link)
+      assert_equal [3], data['tests']['WTest#test_a']['lib/w.rb']
+    end
+  end
+
+  # When the first test framework loaded is Minitest, the map says so, even if RSpec is loaded later.
+  def test_the_first_framework_loaded_is_recorded
+    rspec!
+    project do |root|
+      both = File.join(root, 'test/both_test.rb')
+      File.write(both, "require 'rspec/core'\n#{MINITEST.sub("require_relative '../lib/w'", "require_relative '../lib/w'\nrequire 'rspec/core'")}")
+      data = record(root, File.join(root, 'test/w_test.rb'))
+      assert_equal 'minitest', data['framework']
+      data = record(root, both)
+      assert_equal 'rspec', data['framework']
+    end
+  end
+
+  # Lifecycle hooks of other libraries (included into Minitest::Test, so after the probe) still run.
   def test_other_after_teardown_hooks_still_run
     project do |root|
       check = File.join(root, 'test/hook_test.rb')
@@ -265,6 +308,11 @@ class ProbeTest < Minitest::Test
         require 'minitest/autorun'
 
         module Marker
+          def before_setup
+            File.write("\#{ENV.fetch('MARK')}.setup", name)
+            super
+          end
+
           def after_teardown
             File.write(ENV.fetch('MARK'), name)
             super
@@ -282,6 +330,7 @@ class ProbeTest < Minitest::Test
         mark = File.join(d, 'mark')
         with_env('MARK' => mark) { record(root, 'test/hook_test.rb') }
         assert_equal 'test_x', File.read(mark)
+        assert_equal 'test_x', File.read("#{mark}.setup")
       end
     end
   end

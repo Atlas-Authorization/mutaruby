@@ -325,8 +325,10 @@ class RunnerTest < Minitest::Test
         pids = -> { Dir[File.join(tmp, 'pid-*')].map { |f| f[/\d+\z/].to_i }.sort }
         sleep 0.02 until pids.call.size == 2
         sleep 0.1
+        t0 = Process.clock_gettime(Process::CLOCK_MONOTONIC)
         t.raise(Interrupt)
         assert_raises(Interrupt) { t.join }
+        assert_operator Process.clock_gettime(Process::CLOCK_MONOTONIC) - t0, :<, 8, 'the run stops without finishing the queue'
         assert_equal [false, false], runner.instance_variable_get(:@threads).map(&:alive?), 'workers are stopped'
         started = pids.call
         sleep 0.3

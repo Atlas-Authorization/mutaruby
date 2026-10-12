@@ -162,7 +162,7 @@ module Mutaruby
     end
 
     def next_mutation(queue)
-      queue.pop(true)
+      queue.deq(true)
     rescue ThreadError
       nil
     end

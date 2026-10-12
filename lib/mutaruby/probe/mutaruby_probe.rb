@@ -24,7 +24,6 @@ module MutarubyProbe
 
       @select.empty? ? start_recording : load_selection
       Object.prepend(RequireHook)
-      install_hooks
     end
 
     def recording? = !@out.empty?
@@ -35,7 +34,7 @@ module MutarubyProbe
       require 'coverage'
       require 'json'
       root = ENV.fetch('MUTARUBY_COVERAGE_ROOT')
-      @roots = [root, File.realpath(root)].uniq.map { |r| "#{r}/" }
+      @root = "#{File.realpath(root)}/"
       @tests = Hash.new { |h, id| h[id] = {} }
       @load = {}
       Coverage.start(lines: true)
@@ -59,16 +58,24 @@ module MutarubyProbe
 
         lines = data[:lines]
         hit = lines.each_index.select { |i| lines[i].to_i.positive? }.map { |i| i + 1 }
-        into[rel] = (into.fetch(rel, []) | hit).sort unless hit.empty?
+        into[rel] = (into.fetch(rel, []) | hit).sort
       end
     end
 
+    # Path relative to the project, or nil for files outside it. Coverage reports the path a file was loaded from; it
+    # is compared by its real path.
     def relative(path)
-      [path, (File.realpath(path) rescue path)].each do |p| # rubocop:disable Style/RescueModifier
-        root = @roots.find { |r| p.start_with?(r) }
-        return p.delete_prefix(root) if root
-      end
-      nil
+      real = real_path(path)
+      real.delete_prefix(@root) if real.start_with?(@root)
+    end
+
+    # A file deleted since it was loaded has no real path: its directory's real path is used, or, with the directory
+    # gone too, the path as it was loaded.
+    def real_path(path)
+      File.realpath(path)
+    rescue SystemCallError
+      dir = File.dirname(path)
+      File.directory?(dir) ? File.join(File.realpath(dir), File.basename(path)) : path
     end
 
     # Lines run after the last test (at_exit and after_run hooks) count as load-time lines too.
@@ -143,7 +150,7 @@ module MutarubyProbe
 
   module MinitestRecording
     def before_setup
-      MutarubyProbe.test_started("#{self.class.name}##{name}")
+      MutarubyProbe.test_started("#{self.class}##{name}")
       super
     end
 

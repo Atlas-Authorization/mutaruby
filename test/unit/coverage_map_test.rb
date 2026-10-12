@@ -41,6 +41,8 @@ class CoverageMapTest < Minitest::Test
     assert_nil m.tests_for('lib/x.rb', [7]), 'a line no test reaches runs everything'
     assert_nil m.tests_for('lib/x.rb', [2, 3]), 'a load-time line runs everything'
     assert_nil m.tests_for('lib/z.rb', [3])
+    unsorted = C.new(DATA.merge('tests' => { 'T#z' => { 'lib/x.rb' => [5] }, 'T#a' => { 'lib/x.rb' => [5] } }))
+    assert_equal ['T#a', 'T#z'], unsorted.tests_for('lib/x.rb', [5])
   end
 
   def test_usable
