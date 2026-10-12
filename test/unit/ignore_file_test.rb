@@ -85,7 +85,7 @@ class IgnoreFileTest < Minitest::Test
       err = assert_raises(I::Invalid) { I.load(p) }
       assert_match(/\A#{Regexp.escape(p)}: not valid YAML \(.*line 1 column 3\)\z/, err.message)
       File.write(p, "- &a {file: x}\n- *a\n")
-      assert_raises(Psych::AliasesNotEnabled) { I.load(p) }
+      assert_raises(Psych::BadAlias) { I.load(p) }
       File.write(p, "- !ruby/object:Object {}\n")
       assert_raises(Psych::DisallowedClass) { I.load(p) }
     end
