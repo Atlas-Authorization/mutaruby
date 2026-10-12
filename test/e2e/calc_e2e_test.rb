@@ -12,6 +12,8 @@ class CalcE2ETest < Minitest::Test
 
   ROOT = File.expand_path('../fixtures/calc', __dir__)
   EXE = File.expand_path('../../exe/mutaruby', __dir__)
+  # Long enough for every normal run to finish on a slow (Windows) runner, so only the infinite loops time out.
+  LOOP_TIMEOUT = Mutaruby::Platform.windows? ? '20' : '5'
 
   def run_cli(*args)
     Open3.capture3(RbConfig.ruby, EXE, '-C', ROOT, '-t', %("#{RbConfig.ruby}" test/test_calc.rb), '-q', *args)
@@ -30,7 +32,7 @@ class CalcE2ETest < Minitest::Test
     Dir.mktmpdir do |d|
       json = File.join(d, 'r.json')
       xml = File.join(d, 'r.xml')
-      out, err, st = run_cli('-j', '4', '--timeout', '5', '--json', json, '--junit', xml, '--fail-under', '80')
+      out, err, st = run_cli('-j', '4', '--timeout', LOOP_TIMEOUT, '--json', json, '--junit', xml, '--fail-under', '80')
       assert st.success?, "exit #{st.exitstatus}\n#{out}\n#{err}"
       r = JSON.parse(File.read(json))
 
@@ -74,14 +76,14 @@ class CalcE2ETest < Minitest::Test
   def test_coverage_selection_matches_full_runs
     Dir.mktmpdir do |d|
       full = File.join(d, 'full.json')
-      _, err, st = run_cli('-j', '4', '--timeout', '5', '--json', full)
+      _, err, st = run_cli('-j', '4', '--timeout', LOOP_TIMEOUT, '--json', full)
       assert st.success?, err
       # killed and killed-by-timeout count the same here: on a slow runner a loop can hit the timeout in one run only
       verdicts = lambda do |path|
         JSON.parse(File.read(path))['mutants'].to_h { |m| [m['id'], m['status'].sub('timeout', 'killed')] }
       end
       cov = File.join(d, 'cov.json')
-      _, err, st = run_cli('-j', '4', '--timeout', '5', '--coverage', '--json', cov)
+      _, err, st = run_cli('-j', '4', '--timeout', LOOP_TIMEOUT, '--coverage', '--json', cov)
       assert st.success?, err
       report = JSON.parse(File.read(cov))
       assert_equal 'minitest', report['coverage']
@@ -94,7 +96,7 @@ class CalcE2ETest < Minitest::Test
       end
       spec = File.join(d, 'spec.json')
       _, err, st = Open3.capture3(RbConfig.ruby, EXE, '-C', ROOT, '-t', %("#{RbConfig.ruby}" -S rspec), '-q', '-j', '4',
-                                  '--timeout', '5', '--coverage', '--json', spec)
+                                  '--timeout', LOOP_TIMEOUT, '--coverage', '--json', spec)
       assert st.success?, err
       assert_equal 'rspec', JSON.parse(File.read(spec))['coverage']
       assert_equal verdicts.call(full), verdicts.call(spec)
