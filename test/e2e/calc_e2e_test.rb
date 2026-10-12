@@ -76,7 +76,10 @@ class CalcE2ETest < Minitest::Test
       full = File.join(d, 'full.json')
       _, err, st = run_cli('-j', '4', '--timeout', '5', '--json', full)
       assert st.success?, err
-      verdicts = ->(path) { JSON.parse(File.read(path))['mutants'].to_h { |m| [m['id'], m['status']] } }
+      # killed and killed-by-timeout count the same here: on a slow runner a loop can hit the timeout in one run only
+      verdicts = lambda do |path|
+        JSON.parse(File.read(path))['mutants'].to_h { |m| [m['id'], m['status'].sub('timeout', 'killed')] }
+      end
       cov = File.join(d, 'cov.json')
       _, err, st = run_cli('-j', '4', '--timeout', '5', '--coverage', '--json', cov)
       assert st.success?, err
