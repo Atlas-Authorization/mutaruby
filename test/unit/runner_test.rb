@@ -288,8 +288,11 @@ class RunnerTest < Minitest::Test
       with_project(LIB) do |root|
         { 0 => 1, 1 => 1, 2 => 2, 5 => 5, 50 => 6 }.each do |jobs, want|
           count = %(Dir.glob("#{tmp}/#{sandbox_prefix}*").size.to_s)
-          cmd = rb(%(File.write("#{tmp}/count-#{jobs}-\#{ENV.fetch("MUTARUBY_MUTANT_ID", "base")}", #{count})))
+          # retried: on Windows a virus scanner can hold a just-created file for a moment
+          cmd = rb(%(path = "#{tmp}/count-#{jobs}-\#{ENV.fetch("MUTARUBY_MUTANT_ID", "base")}"
+                     10.times { begin; File.write(path, #{count}); break; rescue SystemCallError; sleep 0.2; end }))
           r = run_on(root, cmd, jobs: jobs)
+          assert_equal [:survived], r.outcomes.map(&:status).uniq, "jobs=#{jobs}"
           assert_equal 6, r.outcomes.size
           assert_equal [jobs, 1].max, r.jobs
           assert_equal want.to_s, File.read(File.join(tmp, "count-#{jobs}-5")).strip, "jobs=#{jobs}"
