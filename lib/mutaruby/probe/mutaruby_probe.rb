@@ -16,8 +16,6 @@
 # Test ids: "Class#test_method" for Minitest, the example id ("./spec/a_spec.rb[1:2]") for RSpec.
 module MutarubyProbe
   class << self
-    attr_reader :framework
-
     def setup
       @out = ENV.fetch('MUTARUBY_COVERAGE_OUT', '')
       @select = ENV.fetch('MUTARUBY_SELECT', '')
@@ -38,9 +36,8 @@ module MutarubyProbe
       require 'json'
       root = ENV.fetch('MUTARUBY_COVERAGE_ROOT')
       @roots = [root, File.realpath(root)].uniq.map { |r| "#{r}/" }
-      @tests = {}
+      @tests = Hash.new { |h, id| h[id] = {} }
       @load = {}
-      @current = nil
       Coverage.start(lines: true)
       at_exit { write if @installed.any? }
     end
@@ -52,8 +49,7 @@ module MutarubyProbe
     end
 
     def test_finished
-      collect(@tests[@current] ||= {})
-      @current = nil
+      collect(@tests[@current])
     end
 
     def collect(into)
@@ -63,7 +59,7 @@ module MutarubyProbe
 
         lines = data[:lines]
         hit = lines.each_index.select { |i| lines[i].to_i.positive? }.map { |i| i + 1 }
-        (into[rel] ||= []).concat(hit) unless hit.empty?
+        into[rel] = (into.fetch(rel, []) | hit).sort unless hit.empty?
       end
     end
 
@@ -75,20 +71,19 @@ module MutarubyProbe
       nil
     end
 
+    # Lines run after the last test (at_exit and after_run hooks) count as load-time lines too.
     def write
       collect(@load)
-      squash = ->(h) { h.transform_values { |l| l.uniq.sort } }
-      File.write(@out, JSON.generate(framework: @installed.first, tests: @tests.transform_values(&squash),
-                                     load: squash.call(@load)))
+      File.write(@out, JSON.generate(framework: @installed.first, tests: @tests, load: @load))
     end
 
     # --- selection -------------------------------------------------------------------------------------------------
 
     def load_selection
-      @selected = File.readlines(@select, chomp: true).to_h { |id| [id, true] }
+      @selected = File.readlines(@select, chomp: true)
     end
 
-    def selected?(id) = @selected.key?(id)
+    def selected?(id) = @selected.include?(id)
 
     # --- frameworks ------------------------------------------------------------------------------------------------
 
@@ -117,7 +112,7 @@ module MutarubyProbe
       @installed << 'rspec'
       if recording?
         ::RSpec.configure do |c|
-          c.around(:example) do |ex|
+          c.around do |ex| # (an example hook)
             MutarubyProbe.test_started(ex.id)
             ex.run
           ensure

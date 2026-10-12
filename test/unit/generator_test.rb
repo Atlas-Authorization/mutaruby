@@ -425,4 +425,18 @@ class GeneratorTest < Minitest::Test
     m = muts(src, operators: ['rescue-removal']).first
     assert_equal "begin\n  a\n\nrescue B\n  c\nend\n", m.text
   end
+
+  def test_nested_method_definitions
+    src = "def outer\n  def inner\n    1\n  end\n  2\nend\n"
+    ms = muts(src, operators: ['literal-int'])
+    assert_equal [%w[1 inner], %w[2 outer]], ms.map { |m| [m.orig, m.method] }.uniq
+  end
+
+  def test_only_known_methods_are_swapped
+    assert_empty changes("a.foo(1)\na.bar\n", 'method-swap')
+  end
+
+  def test_call_to_argument_takes_the_first_argument
+    assert_equal ['o.f(a, b) => a'], changes("o.f(a, b)\n", 'call-to-argument')
+  end
 end

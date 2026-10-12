@@ -91,7 +91,10 @@ module Mutaruby
     #   "Foo", "Foo::Bar"         every method of that namespace and of the namespaces nested in it
     #   "Foo*"                    a glob over namespaces ("Foo*" matches Foo, FooBar and Foo::Baz)
     def subject_match?(subject, name)
-      return false unless name
+      name ? subject_name_match?(subject, name) : false
+    end
+
+    def subject_name_match?(subject, name)
       return File.fnmatch?(subject, name) if subject.match?(/[#.]/)
 
       namespace = name.split(/[#.]/).first

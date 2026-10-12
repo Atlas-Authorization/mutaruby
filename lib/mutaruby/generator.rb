@@ -93,8 +93,8 @@ module Mutaruby
 
     # path: file path for messages; rel: path relative to the project root (stored on the mutants).
     # operators: nil (all) or a list of operator ids.
-    # renderer: :text (default) builds replacements from the source text; :unparser renders the operators that rebuild
-    # a node (element-removal) with the `unparser` gem instead, which must be installed.
+    # renderer: :text (default) builds replacements from the source text; any other value (:unparser) renders the
+    # operators that rebuild a node (element-removal) with the `unparser` gem instead, which must be installed.
     def initialize(source, path:, rel: path, operators: nil, renderer: :text)
       @src = source
       @renderer = renderer
@@ -288,11 +288,11 @@ module Mutaruby
       kids = n.children
       kids.each_index do |i|
         rest = kids.reject.with_index { |_, j| j == i }
-        if @renderer == :unparser
-          add(n.loc.expression, Render.unparse(src_of(n), i), 'element-removal')
-        else
+        if @renderer == :text
           add(kids.first.loc.expression.join(kids.last.loc.expression), rest.map { |k| src_of(k) }.join(', '),
               'element-removal')
+        else
+          add(n.loc.expression, Render.unparse(src_of(n), i), 'element-removal')
         end
       end
     end
@@ -351,12 +351,12 @@ module Mutaruby
     end
 
     def visit_int(n)
-      v = n.children.first
+      v, = n.children
       [v + 1, v - 1, 0, 1].each { |x| add(n.loc.expression, x.to_s, 'literal-int') }
     end
 
     def visit_float(n)
-      v = n.children.first
+      v, = n.children
       add(n.loc.expression, '0.0', 'literal-float') unless v.zero?
       add(n.loc.expression, (v + 1.0).to_s, 'literal-float') if v.finite?
     end
@@ -370,7 +370,8 @@ module Mutaruby
       close = n.loc.end if open
       return unless close
 
-      fill = n.children.first.empty? ? 'mutaruby' : ''
+      text, = n.children
+      fill = text.empty? ? 'mutaruby' : ''
       add(n.loc.expression, "#{open.source}#{fill}#{close.source}", 'literal-string')
     end
 

@@ -45,7 +45,11 @@ class LoadTest < Minitest::Test
       Thread.new do
         Dir.mktmpdir do |dir|
           script = "require 'stringio'\nrequire #{feature.inspect}\n#{code}\n"
-          out, st = Open3.capture2e(RbConfig.ruby, *(NO_GEMS.include?(feature) ? ['--disable-gems'] : []), '-I', LIB, '-e', script, '--', File.realpath(dir), stdin_data: '')
+          # gem-free files run without RubyGems and without RUBYOPT (under bundle exec it would load Bundler, and with
+          # it RbConfig and the gemspec's mutaruby/version)
+          plain = NO_GEMS.include?(feature)
+          out, st = Open3.capture2e(plain ? { 'RUBYOPT' => nil } : {}, RbConfig.ruby, *(plain ? ['--disable-gems'] : []),
+                                    '-I', LIB, '-e', script, '--', File.realpath(dir), stdin_data: '')
           [feature, st.success?, out]
         end
       end

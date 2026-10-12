@@ -23,6 +23,7 @@ class ProbeTest < Minitest::Test
   MINITEST = <<~RUBY
     require 'minitest/autorun'
     require_relative '../lib/w'
+    Minitest.after_run { W.a(1) }
 
     class WTest < Minitest::Test
       def setup
@@ -92,9 +93,11 @@ class ProbeTest < Minitest::Test
       # (Ruby 3.1 does not cover the main script, test/w_test.rb here; later versions do.)
       assert_equal [3], data['tests']['WTest#test_a']['lib/w.rb']
       assert_equal [7], data['tests']['WTest#test_b']['lib/w.rb']
-      assert_equal [6, 14], data['tests']['WTest#test_b']['test/w_test.rb'] if RUBY_VERSION >= '3.2'
+      assert_equal [7, 15], data['tests']['WTest#test_b']['test/w_test.rb'] if RUBY_VERSION >= '3.2'
       assert_equal %w[WTest#test_a WTest#test_b], data['tests'].keys.sort
-      assert_equal [1, 2, 6], data['load']['lib/w.rb']
+      # load-time lines, plus line 3 run by an after_run hook once the tests are over (kept sorted)
+      assert_equal [1, 2, 3, 6], data['load']['lib/w.rb']
+      assert(data['tests'].values.flat_map(&:values).none?(&:empty?), 'only lines that ran are recorded')
       assert_equal [], data['load'].keys - ['lib/w.rb', 'test/w_test.rb'], 'nothing outside the project'
     end
   end
@@ -228,6 +231,57 @@ class ProbeTest < Minitest::Test
         out = File.join(d, 'none.json')
         run_probe(root, { 'MUTARUBY_COVERAGE_OUT' => out, 'MUTARUBY_COVERAGE_ROOT' => root }, '-e', 'exit 0')
         refute File.exist?(out), 'a process without tests writes no map'
+      end
+    end
+  end
+
+  # A file that was loaded and then deleted (no real path any more) is still mapped by the path it was loaded from.
+  def test_records_deleted_files
+    project do |root|
+      check = File.join(root, 'test/gone_test.rb')
+      File.write(check, <<~RUBY)
+        require 'minitest/autorun'
+        tmp = File.join(__dir__, '..', 'lib', 'tmp.rb')
+        File.write(tmp, "module Tmp\n  def self.x\n    1\n  end\nend\n")
+        require tmp
+        File.delete(tmp)
+
+        class GoneTest < Minitest::Test
+          def test_x
+            assert_equal 1, Tmp.x
+          end
+        end
+      RUBY
+      data = record(root, 'test/gone_test.rb')
+      assert_equal [3], data['tests']['GoneTest#test_x']['lib/tmp.rb']
+    end
+  end
+
+  # Hooks of other libraries that follow the probe in the lifecycle (included into Minitest::Test) still run.
+  def test_other_after_teardown_hooks_still_run
+    project do |root|
+      check = File.join(root, 'test/hook_test.rb')
+      File.write(check, <<~RUBY)
+        require 'minitest/autorun'
+
+        module Marker
+          def after_teardown
+            File.write(ENV.fetch('MARK'), name)
+            super
+          end
+        end
+        Minitest::Test.include(Marker)
+
+        class HookTest < Minitest::Test
+          def test_x
+            assert true
+          end
+        end
+      RUBY
+      Dir.mktmpdir do |d|
+        mark = File.join(d, 'mark')
+        with_env('MARK' => mark) { record(root, 'test/hook_test.rb') }
+        assert_equal 'test_x', File.read(mark)
       end
     end
   end

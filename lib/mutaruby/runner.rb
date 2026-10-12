@@ -140,7 +140,7 @@ module Mutaruby
       sandboxes << Sandbox.new(@root, excludes: @o.copy_excludes) while sandboxes.size < n
       results = []
       lock = Mutex.new
-      threads = sandboxes.map do |box|
+      @threads = sandboxes.map do |box|
         Thread.new do
           while (m = next_mutation(queue))
             o = evaluate(m, box, plan, cmd, timeout)
@@ -152,9 +152,9 @@ module Mutaruby
         end
       end
       begin
-        threads.each(&:join)
+        @threads.each(&:join)
       rescue Interrupt
-        threads.each(&:kill)
+        @threads.each(&:kill).each(&:join)
         raise
       end
       @out.puts if @o.progress && results.any?

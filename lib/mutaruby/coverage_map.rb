@@ -31,7 +31,7 @@ module Mutaruby
       data['tests'].each do |id, files|
         files.each { |file, lines| lines.each { |l| @tests[[file, l]] << id } }
       end
-      @load = data['load'].flat_map { |file, lines| lines.map { |l| [file, l] } }.to_h { |k| [k, true] }
+      @load = data['load'].flat_map { |file, lines| lines.map { |l| [file, l] } }
     end
 
     # True when the run recorded tests of a supported framework.
@@ -42,7 +42,7 @@ module Mutaruby
     # The ids of the tests that execute any of `lines` of `file`, sorted; nil when the whole suite has to run: a line
     # that ran while the code was loaded (a class body, a method definition), or a line no test reaches.
     def tests_for(file, lines)
-      return nil if lines.any? { |l| @load.key?([file, l]) }
+      return nil if lines.any? { |l| @load.include?([file, l]) }
 
       ids = lines.flat_map { |l| @tests.fetch([file, l], []) }.uniq.sort
       ids.empty? ? nil : ids

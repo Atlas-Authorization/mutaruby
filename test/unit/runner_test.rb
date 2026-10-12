@@ -319,13 +319,15 @@ class RunnerTest < Minitest::Test
     with_tmpdir do |tmp|
       with_project(LIB) do |root|
         cmd = rb(%(exit 0 unless ENV["MUTARUBY_MUTANT_ID"]; File.write("#{tmp}/pid-\#{Process.pid}", ""); sleep 30))
-        t = Thread.new { run_on(root, cmd, jobs: 2) }
+        runner = Mutaruby::Runner.new(options(root: root, command: cmd, jobs: 2), out: StringIO.new)
+        t = Thread.new { runner.run }
         t.report_on_exception = false
         pids = -> { Dir[File.join(tmp, 'pid-*')].map { |f| f[/\d+\z/].to_i }.sort }
         sleep 0.02 until pids.call.size == 2
         sleep 0.1
         t.raise(Interrupt)
         assert_raises(Interrupt) { t.join }
+        assert_equal [false, false], runner.instance_variable_get(:@threads).map(&:alive?), 'workers are stopped'
         started = pids.call
         sleep 0.3
         assert_equal started, pids.call, 'no new mutant may start after an interrupt'
@@ -439,6 +441,37 @@ class RunnerTest < Minitest::Test
     with_project(SAFE) do |root|
       r = run_on(root, %("#{RbConfig.ruby}" test/s_test.rb), coverage: true, operators: ['rescue-removal'])
       assert_equal [[1, :killed]], r.outcomes.map { |o| [o.tests, o.status] }
+    end
+  end
+
+  # The probe is loaded only with --coverage.
+  def test_baseline_loads_the_probe_only_with_coverage
+    with_project(LIB) do |root|
+      Dir.mktmpdir do |log|
+        show = rb(%(File.write("#{log}/\#{ENV.fetch('MUTARUBY_MUTANT_ID', 'base')}", ENV.fetch('MUTARUBY_COVERAGE_OUT', '-'))))
+        run_on(root, show, operators: ['arithmetic'])
+        assert_equal '-', File.read(File.join(log, 'base'))
+        run_on(root, show, operators: ['arithmetic'], coverage: true)
+        assert File.read(File.join(log, 'base')).end_with?('coverage.json')
+      end
+    end
+  end
+
+  # A Minitest suite without tests records nothing usable: same fallback and warning.
+  def test_coverage_with_an_empty_suite
+    empty = "require 'minitest/autorun'\nrequire_relative '../lib/a'\nclass EmptyTest < Minitest::Test\nend\n"
+    with_project(COVERED.merge('test/a_test.rb' => empty)) do |root|
+      r = run_on(root, %("#{RbConfig.ruby}" test/a_test.rb), coverage: true, operators: ['literal-int'])
+      assert_nil r.coverage
+      assert_equal 1, r.warnings.size
+      assert_equal [nil], r.outcomes.map(&:tests).uniq
+    end
+  end
+
+  def test_default_renderer_is_text
+    with_project('lib/k.rb' => "X = [1,  2]\n") do |root|
+      plan = Mutaruby::Runner.new(options(root: root, command: ok, operators: ['element-removal']), out: StringIO.new).plan
+      assert_equal ['1, 2 => 2', '1, 2 => 1'], plan[:mutations].map(&:change)
     end
   end
 end
