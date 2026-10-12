@@ -21,6 +21,8 @@ All notable changes to this project are documented here. The format follows
 ### Fixed
 
 - An interrupted run starts no new mutant and waits for its workers to finish before it removes their sandboxes.
+- On Windows, a forcibly stopped run is given time to exit for good before its sandbox is removed (the directory
+  stays locked until then); Ctrl-C during the baseline no longer ends in a permission error.
 - With `--coverage`, Ruby processes started by the tests themselves (a test that runs another suite) are neither
   recorded nor filtered, and launcher processes (`bundle exec`, `rake`) do not overwrite the map.
 

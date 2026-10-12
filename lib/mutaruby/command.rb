@@ -86,6 +86,7 @@ module Mutaruby
       deadline = monotonic + @kill_grace
       sleep POLL while monotonic < deadline && @platform.alive?(pid, waiter)
       @platform.stop_tree(pid, graceful: false)
+      @platform.settle(waiter, @kill_grace)
     end
 
     def tail(bytes)
