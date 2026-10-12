@@ -233,7 +233,12 @@ class CommandTest < Minitest::Test
   end
 
   # Regression: Bundler's BUNDLE_GEMFILE must point into the sandbox, or `bundle exec` loads the user's checkout.
+  # (RUBYOPT is cleared so that, under `bundle exec`, the probe does not try to load these made-up Gemfiles.)
   def test_bundle_gemfile_is_redirected_into_the_sandbox
+    with_env('RUBYOPT' => nil) { bundle_gemfile_cases }
+  end
+
+  def bundle_gemfile_cases
     Dir.mktmpdir do |root|
       Dir.mktmpdir do |box|
         echo = rb('puts "#{ENV["BUNDLE_GEMFILE"]}|#{ENV["BUNDLE_APP_CONFIG"]}"')
