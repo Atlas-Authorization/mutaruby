@@ -27,10 +27,12 @@ class RunnerTest < Minitest::Test
   def ok = rb('exit 0')
 
   # A private TMPDIR, so the sandboxes a run creates can be counted.
+  # (Removed with rm_rf: on Windows a file an interrupted run's output went to can stay locked for a moment.)
   def with_tmpdir
-    Dir.mktmpdir do |t|
-      with_env('TMPDIR' => t) { yield t }
-    end
+    t = Dir.mktmpdir
+    with_env('TMPDIR' => t) { yield t }
+  ensure
+    FileUtils.rm_rf(t) if t
   end
 
   def sandboxes_in(tmp) = Dir.glob(File.join(tmp, "#{sandbox_prefix}*"))
