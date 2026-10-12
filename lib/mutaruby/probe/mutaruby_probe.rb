@@ -9,6 +9,10 @@
 #   MUTARUBY_COVERAGE_ROOT=DIR   the project directory; only files below it are recorded
 #   MUTARUBY_SELECT=FILE         run only the tests whose ids FILE lists, one per line
 #
+# The test command may start several Ruby processes (bundle exec -> rake -> ruby running the tests). Each loads the
+# probe, but only the process that loads a test framework records or selects: launchers write nothing. That process
+# then removes the variables, so Ruby processes started by the tests themselves run normally.
+#
 # Test ids: "Class#test_method" for Minitest, the example id ("./spec/a_spec.rb[1:2]") for RSpec.
 module MutarubyProbe
   class << self
@@ -38,7 +42,7 @@ module MutarubyProbe
       @load = {}
       @current = nil
       Coverage.start(lines: true)
-      at_exit { write }
+      at_exit { write if @installed.any? }
     end
 
     # Lines run before a test starts (loading code, defining methods) count as load-time lines.
@@ -93,7 +97,13 @@ module MutarubyProbe
       install_rspec if !@installed.include?('rspec') && defined?(::RSpec) && ::RSpec.respond_to?(:configure)
     end
 
+    # The first framework found: this is the test process. Its children must not record or select.
+    def claim
+      %w[MUTARUBY_COVERAGE_OUT MUTARUBY_COVERAGE_ROOT MUTARUBY_SELECT].each { |k| ENV.delete(k) }
+    end
+
     def install_minitest
+      claim
       @installed << 'minitest'
       if recording?
         ::Minitest::Test.prepend(MinitestRecording)
@@ -103,6 +113,7 @@ module MutarubyProbe
     end
 
     def install_rspec
+      claim
       @installed << 'rspec'
       if recording?
         ::RSpec.configure do |c|

@@ -189,4 +189,44 @@ class ProbeTest < Minitest::Test
       record(root, check)
     end
   end
+
+  NESTED = <<~RUBY
+    require 'minitest/autorun'
+    require 'open3'
+    require 'rbconfig'
+
+    class NestedTest < Minitest::Test
+      def test_runs_another_suite
+        out, = Open3.capture2e(RbConfig.ruby, 'test/w_test.rb')
+        assert_match(/2 runs, 2 assertions, 0 failures/, out)
+      end
+    end
+  RUBY
+
+  # Ruby processes started by the tests run normally: they neither record nor select.
+  def test_processes_started_by_tests_are_left_alone
+    project do |root|
+      File.write(File.join(root, 'test/nested_test.rb'), NESTED)
+      data = record(root, 'test/nested_test.rb')
+      assert_equal ['NestedTest#test_runs_another_suite'], data['tests'].keys
+      assert_equal 'minitest', data['framework']
+      selected(root, ['NestedTest#test_runs_another_suite'], 'test/nested_test.rb')
+    end
+  end
+
+  # A launcher (rake, bundle exec) loads the probe too but no framework: the test process it starts records, and the
+  # launcher does not overwrite what it wrote.
+  def test_launchers_write_nothing
+    project do |root|
+      launcher = File.join(root, 'launch.rb')
+      File.write(launcher, "require 'rbconfig'\nexit(system(RbConfig.ruby, 'test/w_test.rb') ? 0 : 1)\n")
+      data = record(root, launcher)
+      assert_equal %w[WTest#test_a WTest#test_b], data['tests'].keys.sort
+      Dir.mktmpdir do |d|
+        out = File.join(d, 'none.json')
+        run_probe(root, { 'MUTARUBY_COVERAGE_OUT' => out, 'MUTARUBY_COVERAGE_ROOT' => root }, '-e', 'exit 0')
+        refute File.exist?(out), 'a process without tests writes no map'
+      end
+    end
+  end
 end
