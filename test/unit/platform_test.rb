@@ -23,6 +23,11 @@ class PlatformTest < Minitest::Test
     assert_equal P.windows?(RbConfig::CONFIG['host_os']), P.windows?
   end
 
+  def test_for_a_host
+    assert_instance_of P::Windows, P.for('mingw32')
+    assert_instance_of P::Posix, P.for('linux-gnu')
+  end
+
   def test_current_is_chosen_once
     assert_instance_of(P.windows? ? P::Windows : P::Posix, P.current)
     saved = P.current

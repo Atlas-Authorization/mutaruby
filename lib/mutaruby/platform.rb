@@ -72,8 +72,12 @@ module Mutaruby
       host_os.match?(/mswin|mingw|cygwin/)
     end
 
+    def self.for(host_os)
+      windows?(host_os) ? Windows.new : Posix.new
+    end
+
     def self.current
-      @current ||= windows? ? Windows.new : Posix.new
+      @current ||= self.for(RbConfig::CONFIG['host_os'])
     end
   end
 end

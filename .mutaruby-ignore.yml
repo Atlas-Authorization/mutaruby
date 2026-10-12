@@ -40,7 +40,7 @@
 
 - file: lib/mutaruby/command.rb
   operator: comparison
-  line: sleep POLL while monotonic < deadline && alive?(pid)
+  line: sleep POLL while monotonic < deadline && @platform.alive?(pid, waiter)
   mutation: "< => <="
   reason: >-
     monotonic is a Float clock reading; the loop ends within one POLL either way, and the two conditions differ only

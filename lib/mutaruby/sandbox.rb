@@ -88,7 +88,7 @@ module Mutaruby
     def link(src, dest)
       File.symlink(File.readlink(src), dest)
     rescue NotImplementedError, Errno::EPERM, Errno::EACCES
-      FileUtils.cp_r(src, dest, dereference_root: true) if File.exist?(src)
+      FileUtils.cp_r(src, dest) if File.exist?(src) # cp_r follows a symlink given as its source
     end
 
     def copy_tree
