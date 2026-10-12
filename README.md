@@ -276,6 +276,17 @@ How it works:
    body, a constant, a method definition line), when no test reaches its lines, or when the baseline recorded no
    Minitest or RSpec tests at all (mutaruby then prints a warning).
 
+What it saves depends on the suite. Measured on GitHub Actions (`script/benchmark-coverage.rb`, 4 workers), with the
+same verdicts both ways:
+
+| Project | Mutants | Whole test command | `--coverage` |
+|---|---|---|---|
+| mutaruby's own unit suite (a 1/25 sample of its mutants) | 199 | 3,788 s | 2,276 s (1.7x faster) |
+| `test/fixtures/calc` (5 tests, Minitest or RSpec) | 43 | 13 s | 13 s |
+
+A small suite gains nothing: starting Ruby costs more than its tests. The larger and slower the suite, and the fewer
+tests reach each line, the bigger the win.
+
 The summary shows how many mutants ran a subset, and the JSON report has, per mutant, the number of tests it ran
 (`tests`, or `null` for the whole command). Selection assumes that tests are independent of each other: a test that
 only passes after another one has run can make a mutant look killed.
