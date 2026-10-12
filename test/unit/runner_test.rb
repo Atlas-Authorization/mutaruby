@@ -414,4 +414,31 @@ class RunnerTest < Minitest::Test
       refute plan[:complete]
     end
   end
+
+  SAFE = {
+    'lib/s.rb' => "module S\n  def self.safe(x)\n    Integer(x)\n  rescue ArgumentError\n    0\n  end\nend\n",
+    'test/s_test.rb' => <<~RUBY
+      require 'minitest/autorun'
+      require_relative '../lib/s'
+
+      class STest < Minitest::Test
+        def test_ok
+          assert_equal 3, S.safe('3')
+        end
+
+        def test_bad
+          assert_equal 0, S.safe('x')
+        end
+      end
+    RUBY
+  }.freeze
+
+  # A mutant spanning several lines selects the tests of all of them: removing the rescue clause (its first line has
+  # no coverage of its own) runs the test that reaches the clause's body.
+  def test_coverage_of_multi_line_mutants
+    with_project(SAFE) do |root|
+      r = run_on(root, %("#{RbConfig.ruby}" test/s_test.rb), coverage: true, operators: ['rescue-removal'])
+      assert_equal [[1, :killed]], r.outcomes.map { |o| [o.tests, o.status] }
+    end
+  end
 end
