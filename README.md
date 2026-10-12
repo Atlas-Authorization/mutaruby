@@ -48,6 +48,7 @@ The survivor above tells you that no test checks a total of exactly 100.
 - [Output formats](#output-formats)
 - [How it compares with mutant](#how-it-compares-with-mutant)
 - [Design notes](#design-notes)
+- [Windows notes](#windows-notes)
 - [Limitations](#limitations)
 - [Contributing, security, licence](#contributing-security-licence)
 
@@ -84,7 +85,7 @@ end
 ```
 
 mutaruby needs Ruby 3.1 or newer and depends only on the [`parser`](https://github.com/whitequark/parser) gem. It runs
-on Linux and macOS (it uses process groups and `/bin/sh`).
+on Linux, macOS and Windows (see [Windows notes](#windows-notes)); CI tests all three.
 
 ## Quickstart
 
@@ -134,7 +135,7 @@ Positional arguments are files or globs relative to the project root. The defaul
 
 | Option | Meaning |
 |---|---|
-| `-t`, `--test COMMAND` | **Required.** Shell command (run with `/bin/sh -c`) that runs your tests. Exit 0 means the mutant survived, non-zero means killed. |
+| `-t`, `--test COMMAND` | **Required.** Shell command that runs your tests: run with `/bin/sh -c` on Linux and macOS, with `cmd.exe` on Windows. Exit 0 means the mutant survived, non-zero means killed. |
 | `-C`, `--root DIR` | Project root (default: the current directory). This is the directory copied into each sandbox, and the command runs there. |
 | `-j`, `--jobs N` | Parallel workers (default: the number of CPUs). Each worker has its own copy of the project. |
 | `--timeout SECONDS` | Per-mutant time limit. A mutant that exceeds it (an infinite loop, say) is killed together with every process it started and counted as **killed, by timeout**. The default is `baseline time x factor + 5` seconds. |
@@ -360,7 +361,7 @@ at any project with one command, mutaruby is for you.
 
 ## Design notes
 
-**A fresh process per mutant.** Every run, the baseline and each mutant, is a new `/bin/sh -c COMMAND` with its
+**A fresh process per mutant.** Every run, the baseline and each mutant, is a new shell (`/bin/sh -c COMMAND`; `cmd.exe` on Windows) with its
 own Ruby. Nothing loaded by one run can leak into the next. This matters more than it looks. When mutants are
 evaluated inside one long-lived process, deleting a `require` cannot be detected because the library is already loaded,
 and a deleted method or constant can quietly keep its old definition. Those mutants then "survive" and report test
@@ -391,9 +392,33 @@ the next one.
 
 **Site keys instead of line numbers** for the ignore file; see [above](#equivalent-mutants-the-ignore-file).
 
+## Windows notes
+
+mutaruby works the same way on Windows, with these differences:
+
+- **The shell is `cmd.exe`.** Quote with double quotes, not single quotes: `mutaruby -t "bundle exec rspec"` works in
+  both shells, but `-t 'ruby -e "exit 1"'` is POSIX-only quoting. In `cmd.exe` the inner quotes have to be escaped
+  (or put the command in a `.bat` file, or in a Rake task, and call that). Variables are written `%NAME%`, not
+  `$NAME`.
+- **Stopping a run.** Each run starts in a new process group. On timeout its whole process tree is stopped with
+  `taskkill /T` (first without `/F`, then, after the same two-second grace period, with `/F`). Unlike on POSIX
+  systems, processes that a run leaves behind after it exits normally are not stopped: Windows finds a tree through
+  the parent process, which is gone by then, and its id may already belong to an unrelated process. Make test
+  helpers that start servers stop them.
+- **Sandboxes** are named `mr…` (shorter than `mutaruby-…`) under `%TEMP%`, because classic Windows paths are
+  limited to 260 characters. For a deeply nested project, enable long paths or point `TMP`/`TEMP` at a short
+  directory such as `C:\t`.
+- **Locked files.** A process that is still exiting, or a virus scanner, can hold a file open for a moment. Writes
+  into the sandbox and its removal are retried (10 times, 0.1 s apart) before mutaruby gives up.
+- **Symlinks** in the project are copied as symlinks when Windows allows it (Developer Mode or the symlink
+  privilege), and otherwise replaced by a copy of what they point to.
+- **Line endings.** Files with CRLF (or mixed) line endings are mutated in place without changing their line endings.
+  Sources are read as UTF-8 regardless of the console code page.
+
 ## Limitations
 
-- Linux and macOS only (process groups, `/bin/sh`). Windows is not supported.
+- On Windows, processes that a test run leaves running after it exits normally are not stopped (see
+  [Windows notes](#windows-notes)).
 - The test command is run as is for every mutant; mutaruby does not work out which tests cover which code.
 - The parser grammar is chosen to match the running Ruby, up to the newest grammar the installed `parser` gem knows.
   Files that `parser` cannot read (for example syntax newer than it supports) are skipped with a warning.

@@ -33,6 +33,16 @@ module TestHelpers
 
   def sandbox_prefix = Mutaruby::Platform.current.temp_prefix
 
+  # True when no process with this id runs (on Windows signal 0 is not reliable for this, so ask tasklist).
+  def process_gone?(pid)
+    return !IO.popen(['tasklist', '/FI', "PID eq #{pid}", '/NH'], &:read).include?(" #{pid} ") if windows?
+
+    Process.kill(0, pid)
+    false
+  rescue Errno::ESRCH
+    true
+  end
+
   # A per-mutant timeout for tests where one mutant hangs: long enough for a normal run to finish even on a slow
   # Windows runner (Ruby starts much more slowly there).
   def hang_timeout = windows? ? 6 : 1

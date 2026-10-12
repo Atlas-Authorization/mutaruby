@@ -24,6 +24,8 @@ class CommandTest < Minitest::Test
   end
 
   def gone?(pid)
+    return process_gone?(pid) if windows?
+
     Process.kill(0, pid)
     stat = "/proc/#{pid}/stat"
     File.exist?(stat) && File.read(stat).split[2] == 'Z'

@@ -3,6 +3,28 @@
 All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [0.2.0] - 2026-10-12
+
+### Added
+
+- Windows support. The test command runs under `cmd.exe` in a new process group; on timeout the whole process tree
+  is stopped with `taskkill /T` (graceful first, then `/F` after the grace period). Sandboxes get short names, writes
+  and deletes are retried while a file is locked, and symlinks fall back to copies where Windows does not allow
+  them. See "Windows notes" in the README.
+- `Mutaruby::Platform`, which holds everything that differs between POSIX systems and Windows. The POSIX behaviour is
+  unchanged.
+- CI on Linux, macOS and Windows (Ruby 3.1 to 3.4), including a fixture run whose infinite-loop mutant must be
+  stopped by the timeout.
+
+### Fixed
+
+- Files with CRLF line endings aborted the run with a splice self-check error: `parser` reads `\r\n` as `\n`, so its
+  offsets did not match the file. Offsets are now mapped back to the file's own characters, and a mutant keeps the
+  file's line endings (mixed endings included).
+- Sources are read as bytes and decoded as UTF-8, with no newline conversion on Windows; ignore files are read as
+  UTF-8 whatever the default external encoding.
+- Sandbox removal no longer silently leaves files behind when one is locked.
+
 ## [0.1.1] - 2026-10-12
 
 mutaruby now scores 100% on its own code: every mutant is killed by a test or listed, with a checkable reason, in
@@ -49,5 +71,6 @@ First release.
   reason, ambiguity and staleness checks, `--strict-ignore` and `--suggest-ignore`.
 - Human, JSON and JUnit XML reports, a mutation score and `--fail-under` for CI.
 
+[0.2.0]: https://github.com/Atlas-Authorization/mutaruby/releases/tag/v0.2.0
 [0.1.1]: https://github.com/Atlas-Authorization/mutaruby/releases/tag/v0.1.1
 [0.1.0]: https://github.com/Atlas-Authorization/mutaruby/releases/tag/v0.1.0

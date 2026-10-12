@@ -12,7 +12,7 @@ bundle exec rake test        # unit + end-to-end
 bundle exec rake test:unit   # the fast part
 ```
 
-You need Ruby 3.1 or newer on Linux or macOS.
+You need Ruby 3.1 or newer on Linux, macOS or Windows. Tests that use POSIX shells or signals are skipped on Windows.
 
 ## Layout
 

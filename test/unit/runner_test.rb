@@ -133,7 +133,8 @@ class RunnerTest < Minitest::Test
         r = run_on(root, cmd, jobs: 3)
         lines = Dir[File.join(log, 'pid-*')].map { |f| File.read(f).split }
         assert_equal r.outcomes.size + 1, lines.size
-        assert_equal lines.size, lines.map(&:first).uniq.size
+        # distinct process ids (only meaningful where ids are not reused at once: Windows reuses them quickly)
+        assert_equal lines.size, lines.map(&:first).uniq.size unless windows?
         assert_equal ['base'] + r.outcomes.map { |o| o.mutation.id.to_s }, lines.map(&:last).sort_by { |x| x == 'base' ? -1 : x.to_i }
       end
     end
@@ -312,18 +313,18 @@ class RunnerTest < Minitest::Test
   def test_interrupt_stops_everything
     with_tmpdir do |tmp|
       with_project(LIB) do |root|
-        cmd = rb(%(exit 0 unless ENV["MUTARUBY_MUTANT_ID"]; File.open("#{tmp}/pids", "a") { |f| f.puts Process.pid }; sleep 30))
+        cmd = rb(%(exit 0 unless ENV["MUTARUBY_MUTANT_ID"]; File.write("#{tmp}/pid-\#{Process.pid}", ""); sleep 30))
         t = Thread.new { run_on(root, cmd, jobs: 2) }
         t.report_on_exception = false
-        pids = File.join(tmp, 'pids')
-        sleep 0.02 until File.exist?(pids) && File.readlines(pids).size == 2
+        pids = -> { Dir[File.join(tmp, 'pid-*')].map { |f| f[/\d+\z/].to_i }.sort }
+        sleep 0.02 until pids.call.size == 2
         sleep 0.1
         t.raise(Interrupt)
         assert_raises(Interrupt) { t.join }
-        started = File.readlines(pids).map(&:to_i)
+        started = pids.call
         sleep 0.3
-        assert_equal started, File.readlines(pids).map(&:to_i), 'no new mutant may start after an interrupt'
-        started.each { |pid| assert_raises(Errno::ESRCH) { Process.kill(0, pid) } }
+        assert_equal started, pids.call, 'no new mutant may start after an interrupt'
+        started.each { |pid| assert process_gone?(pid), "process #{pid} still running" }
         assert_empty sandboxes_in(tmp)
       end
     end
