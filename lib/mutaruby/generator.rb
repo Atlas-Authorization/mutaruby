@@ -3,6 +3,7 @@
 require_relative 'parsing'
 require_relative 'mutation'
 require_relative 'splicer'
+require_relative 'render'
 
 module Mutaruby
   # Walks a file's AST (the `parser` gem) and produces every mutant of it. Each mutant is ONE splice of the original
@@ -46,7 +47,24 @@ module Mutaruby
       'raise-removal' => 'raise X -> nil (also fail)',
       'op-assign' => 'swap compound assignment (+= <-> -=, *= <-> /=, |= <-> &=, <<= <-> >>=)',
       'or-assign' => 'a ||= b -> a = b',
-      'and-assign' => 'a &&= b -> a = b'
+      'and-assign' => 'a &&= b -> a = b',
+      'block-removal' => 'list.map { |x| f(x) } -> list.map (the call without its block)',
+      'method-swap' => 'swap a method for its counterpart (first <-> last, min <-> max, select <-> reject, ...)',
+      'element-removal' => '[a, b] -> [b], [a]; { k: 1, j: 2 } -> { j: 2 }, { k: 1 } (one element removed at a time)',
+      'regexp-never-match' => '/pattern/ -> /(?!)/ (a regexp that matches nothing)',
+      'yield-removal' => 'yield x -> nil',
+      'super-removal' => 'super / super(x) -> nil',
+      'when-removal' => 'one `when` branch of a case removed',
+      'rescue-removal' => 'one `rescue` clause removed'
+    }.freeze
+
+    # method-swap pairs: each method and the one it is replaced with.
+    METHOD_SWAPS = {
+      first: :last, last: :first, min: :max, max: :min, min_by: :max_by, max_by: :min_by, any?: :all?, all?: :any?,
+      select: :reject, reject: :select, filter: :reject, upcase: :downcase, downcase: :upcase, floor: :ceil,
+      ceil: :floor, succ: :pred, pred: :succ, keys: :values, values: :keys, start_with?: :end_with?,
+      end_with?: :start_with?, take: :drop, drop: :take, take_while: :drop_while, drop_while: :take_while,
+      push: :unshift, unshift: :push, pop: :shift, shift: :pop
     }.freeze
 
     SWAPS = {
@@ -75,8 +93,11 @@ module Mutaruby
 
     # path: file path for messages; rel: path relative to the project root (stored on the mutants).
     # operators: nil (all) or a list of operator ids.
-    def initialize(source, path:, rel: path, operators: nil)
+    # renderer: :text (default) builds replacements from the source text; :unparser renders the operators that rebuild
+    # a node (element-removal) with the `unparser` gem instead, which must be installed.
+    def initialize(source, path:, rel: path, operators: nil, renderer: :text)
       @src = source
+      @renderer = renderer
       @path = path
       @rel = rel
       @operators = operators
@@ -226,10 +247,8 @@ module Mutaruby
       when :true then add(n.loc.expression, 'false', 'literal-boolean')
       when :false then add(n.loc.expression, 'true', 'literal-boolean')
       when :nil then add(n.loc.expression, 'true', 'literal-nil')
-      when :array
-        add(n.loc.expression, '[]', 'literal-array') if n.children.any? && n.loc.begin&.source == '['
-      when :hash
-        add(n.loc.expression, '{}', 'literal-hash') if n.children.any? && n.loc.begin&.source == '{'
+      when :array then visit_collection(n, '[', '[]', 'literal-array')
+      when :hash then visit_collection(n, '{', '{}', 'literal-hash')
       when :irange, :erange
         # an endless range (a..) means the same with either operator
         add(n.loc.operator, n.type == :irange ? '...' : '..', 'range-swap') unless n.children[1].nil?
@@ -242,6 +261,39 @@ module Mutaruby
       when :and_asgn then add(n.loc.operator, '=', 'and-assign')
       when :begin, :kwbegin then visit_body(n)
       when :def, :defs then visit_def(n)
+      when :block, :numblock then add(n.loc.expression, src_of(n.children.first), 'block-removal')
+      when :regexp then add(n.loc.expression, '/(?!)/', 'regexp-never-match')
+      when :yield then add(n.loc.expression, 'nil', 'yield-removal')
+      when :super, :zsuper then add(n.loc.expression, 'nil', 'super-removal')
+      when :case then remove_clauses(n.children[1...-1], 'when-removal')
+      when :rescue then remove_clauses(n.children[1...-1], 'rescue-removal')
+      end
+    end
+
+    # A bracketed array / braced hash: emptied, and each element removed in turn.
+    def visit_collection(n, open, empty, op)
+      return unless n.loc.begin&.source == open
+
+      add(n.loc.expression, empty, op) if n.children.any?
+      remove_elements(n) if n.children.size.between?(2, MAX_ARGS)
+    end
+
+    # Each clause (a `when`, a `rescue`) deleted in turn; the validity check drops what would not parse.
+    def remove_clauses(clauses, op)
+      clauses.each { |c| add(c.loc.expression, '', op) }
+    end
+
+    # [a, b, c] -> [b, c], [a, c], [a, b] (and the same for the pairs of a braced hash).
+    def remove_elements(n)
+      kids = n.children
+      kids.each_index do |i|
+        rest = kids.reject.with_index { |_, j| j == i }
+        if @renderer == :unparser
+          add(n.loc.expression, Render.unparse(src_of(n), i), 'element-removal')
+        else
+          add(kids.first.loc.expression.join(kids.last.loc.expression), rest.map { |k| src_of(k) }.join(', '),
+              'element-removal')
+        end
       end
     end
 
@@ -250,6 +302,7 @@ module Mutaruby
       SWAPS.each do |op, table|
         add(n.loc.selector, table[meth].to_s, op) if table.key?(meth) && args.size == 1
       end
+      add(n.loc.selector, METHOD_SWAPS[meth].to_s, 'method-swap') if recv && METHOD_SWAPS.key?(meth)
       add(n.loc.expression, src_of(recv), 'negation-removal') if meth == :!
       add(n.loc.expression, src_of(recv), 'unary-minus-removal') if meth == :-@
       add(n.loc.dot, '.', 'safe-navigation') if n.type == :csend

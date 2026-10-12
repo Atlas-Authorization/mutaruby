@@ -43,6 +43,10 @@ module Mutaruby
       io.puts "  survived:    #{report.count(:survived)}"
       io.puts "  equivalent:  #{report.count(:equivalent)} (ignore file)"
       io.puts "  score:       #{score_text(report)}  = killed / (mutants - equivalent)"
+      if report.coverage
+        subset = report.outcomes.count(&:tests)
+        io.puts "  coverage:    #{report.coverage}: #{subset} of #{report.outcomes.size} mutants ran only the tests covering them"
+      end
       io.puts format('  time:        %.1fs (baseline %.2fs, timeout %ss, jobs %d)', report.seconds,
                      report.baseline_seconds, report.timeout, report.jobs)
     end
@@ -50,12 +54,12 @@ module Mutaruby
     def json_data(report)
       {
         tool: 'mutaruby', version: VERSION, command: report.command,
-        score: report.score&.round(4), complete: report.complete,
+        score: report.score&.round(4), complete: report.complete, coverage: report.coverage,
         counts: { mutants: report.outcomes.size, killed: report.killed, timeout: report.count(:timeout),
                   survived: report.count(:survived), equivalent: report.count(:equivalent) },
         files: report.files, baseline_seconds: secs(report.baseline_seconds), timeout: report.timeout,
         mutants: report.outcomes.map do |o|
-          o.mutation.to_h.merge(status: o.status, seconds: secs(o.seconds), ignore_reason: o.ignore&.reason)
+          o.mutation.to_h.merge(status: o.status, seconds: secs(o.seconds), ignore_reason: o.ignore&.reason, tests: o.tests)
         end,
         stale_ignores: report.stale.map { |e| e.to_h.compact.except(:index) },
         warnings: report.warnings

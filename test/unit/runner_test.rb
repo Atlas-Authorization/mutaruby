@@ -41,6 +41,7 @@ class RunnerTest < Minitest::Test
                  [o.root, o.patterns, o.jobs, o.timeout_factor, o.methods, o.exclude_methods, o.lines, o.exclude_lines,
                   o.copy_excludes, o.progress]
     assert_nil o.timeout
+    assert_equal [[], false, :text], [o.subjects, o.coverage, o.renderer]
     assert_equal 4, Mutaruby::Runner::Options.build(jobs: 4).jobs
     assert_equal({ killed: '.', timeout: 'T', survived: 'S', equivalent: 'e' }, Mutaruby::Runner::MARK)
   end
@@ -341,6 +342,76 @@ class RunnerTest < Minitest::Test
     def flush
       @flushes = (@flushes || 0) + 1
       super
+    end
+  end
+
+  COVERED = {
+    'lib/a.rb' => "module A\n  def self.one\n    1\n  end\n\n  def self.two\n    2\n  end\nend\n",
+    'test/a_test.rb' => <<~RUBY
+      require 'minitest/autorun'
+      require_relative '../lib/a'
+
+      class ATest < Minitest::Test
+        def setup
+          File.write(File.join(ENV['LOG'], "\#{ENV.fetch('MUTARUBY_MUTANT_ID', 'base')}-\#{name}"), '') if ENV['LOG']
+        end
+
+        def test_one
+          assert_equal 1, A.one
+        end
+
+        def test_two
+          assert_equal 2, A.two
+        end
+      end
+    RUBY
+  }.freeze
+
+  # With coverage, the baseline maps tests to lines and each mutant runs only the tests that reach it.
+  def test_coverage_based_selection
+    with_project(COVERED) do |root|
+      Dir.mktmpdir do |log|
+        with_env('LOG' => log) do
+          cmd = %("#{RbConfig.ruby}" test/a_test.rb)
+          r = run_on(root, cmd, coverage: true, operators: ['literal-int'], jobs: 1)
+          assert_equal 'minitest', r.coverage
+          assert_equal [], r.warnings
+          ran = Dir.children(log).sort
+          r.outcomes.each do |o|
+            m = o.mutation
+            want = m.lineno == 3 ? 'test_one' : 'test_two'
+            assert_equal 1, o.tests, m.label
+            assert_equal ["#{m.id}-#{want}"], ran.select { |f| f.start_with?("#{m.id}-") }, m.label
+            assert_equal :killed, o.status
+          end
+          assert_equal %w[base-test_one base-test_two], ran.select { |f| f.start_with?('base-') }
+          plain = run_on(root, cmd, operators: ['literal-int'], jobs: 1)
+          assert_nil plain.coverage
+          assert_equal [nil], plain.outcomes.map(&:tests).uniq
+        end
+      end
+    end
+  end
+
+  # A test command that is not Minitest or RSpec cannot be mapped: everything runs the whole command.
+  def test_coverage_without_a_supported_framework
+    with_project(LIB) do |root|
+      r = run_on(root, killer, coverage: true, operators: ['arithmetic'])
+      assert_nil r.coverage
+      assert_equal ['coverage: no Minitest or RSpec tests were recorded in the baseline run; every mutant runs the ' \
+                    'whole test command'], r.warnings
+      assert_equal [nil], r.outcomes.map(&:tests)
+      assert_equal [:killed], r.outcomes.map(&:status)
+    end
+  end
+
+  def test_subjects_and_renderer_reach_the_plan
+    src = "class K\n  def a = [1, 2]\nend\nclass L\n  def b = 3\nend\n"
+    with_project('lib/k.rb' => src) do |root|
+      plan = Mutaruby::Runner.new(options(root: root, command: ok, subjects: ['K'], operators: ['element-removal'],
+                                          renderer: :unparser), out: StringIO.new).plan
+      assert_equal ['[1, 2] => [2]', '[1, 2] => [1]'], plan[:mutations].map(&:change)
+      refute plan[:complete]
     end
   end
 end

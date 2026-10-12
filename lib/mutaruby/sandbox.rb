@@ -51,6 +51,11 @@ module Mutaruby
       File.join(@dir, rel)
     end
 
+    # A path for mutaruby's own files: next to the project copy, not inside it.
+    def scratch(name)
+      File.join(@base, name)
+    end
+
     # Writes `text` to `rel` inside the sandbox, yields, and restores the original bytes afterwards (also on error).
     def with_file(rel, text, original)
       target = path(rel)

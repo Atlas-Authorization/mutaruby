@@ -21,4 +21,8 @@ class ConstantsTest < Minitest::Test
     %i[OPERATORS SWAPS OP_ASSIGN DECLARATIONS VISIBILITY_CALLS STRUCTURAL PREDICATE_SKIP DEFAULT_EXCLUDES
        DEFAULT_PATTERNS KEYS REQUIRED STRINGS MARK].each { |c| assert_includes seen, c }
   end
+
+  def test_method_swaps_are_frozen
+    assert Mutaruby::Generator::METHOD_SWAPS.frozen?
+  end
 end

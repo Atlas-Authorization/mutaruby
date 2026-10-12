@@ -69,4 +69,32 @@ class CalcE2ETest < Minitest::Test
     assert_equal 1, st.exitstatus
     assert_match(/below --fail-under/, err)
   end
+
+  # Coverage-based selection gives the same verdicts as running the whole suite, for Minitest and for RSpec.
+  def test_coverage_selection_matches_full_runs
+    Dir.mktmpdir do |d|
+      full = File.join(d, 'full.json')
+      _, err, st = run_cli('-j', '4', '--timeout', '5', '--json', full)
+      assert st.success?, err
+      verdicts = ->(path) { JSON.parse(File.read(path))['mutants'].to_h { |m| [m['id'], m['status']] } }
+      cov = File.join(d, 'cov.json')
+      _, err, st = run_cli('-j', '4', '--timeout', '5', '--coverage', '--json', cov)
+      assert st.success?, err
+      report = JSON.parse(File.read(cov))
+      assert_equal 'minitest', report['coverage']
+      assert_operator report['mutants'].count { |m| m['tests'] }, :>, 30
+      assert_equal verdicts.call(full), verdicts.call(cov)
+      begin
+        Gem::Specification.find_by_name('rspec-core')
+      rescue Gem::MissingSpecError
+        skip 'rspec is not installed'
+      end
+      spec = File.join(d, 'spec.json')
+      _, err, st = Open3.capture3(RbConfig.ruby, EXE, '-C', ROOT, '-t', %("#{RbConfig.ruby}" -S rspec), '-q', '-j', '4',
+                                  '--timeout', '5', '--coverage', '--json', spec)
+      assert st.success?, err
+      assert_equal 'rspec', JSON.parse(File.read(spec))['coverage']
+      assert_equal verdicts.call(full), verdicts.call(spec)
+    end
+  end
 end

@@ -71,6 +71,8 @@ module Mutaruby
         op.on('-j', '--jobs N', Integer, "Parallel workers (default: #{Etc.nprocessors})") { |v| o.jobs = v }
         op.on('--timeout SECONDS', Float, 'Per-mutant timeout (default: baseline time x factor + 5s)') { |v| o.timeout = v }
         op.on('--timeout-factor F', Float, 'Multiplier on the baseline time for the default timeout (default: 3)') { |v| o.timeout_factor = v }
+        op.on('--coverage', 'Run only the tests that cover each mutant (Minitest and RSpec; mapped in the baseline run)') { o.coverage = true }
+        op.on('--unparser', 'Render rebuilt nodes with the unparser gem (element-removal; needs gem install unparser)') { o.renderer = :unparser }
         op.on('--copy-exclude GLOB', 'Do not copy matching paths into the sandboxes (repeatable; .git and coverage are always skipped)') { |v| o.copy_excludes += [v] }
         op.separator ''
         op.separator 'Selection:'
@@ -79,6 +81,7 @@ module Mutaruby
         op.on('--exclude-method PATTERN', 'Skip mutants inside matching methods (repeatable)') { |v| o.exclude_methods += [v] }
         op.on('--line SPEC', 'Only mutants on these lines: [FILE:]LINE or [FILE:]FROM-TO (repeatable)') { |v| o.lines += [Selection.parse_line_spec(v)] }
         op.on('--exclude-line SPEC', 'Skip mutants on these lines (repeatable)') { |v| o.exclude_lines += [Selection.parse_line_spec(v)] }
+        op.on('--subject PATTERN', 'Only mutants in these methods: "Foo#bar", "Foo.bar", "Foo#*", "Foo" (with nested namespaces), "Foo*" (repeatable)') { |v| o.subjects += [v] }
         op.on('--operators LIST', Array, 'Only these operators (comma-separated; globs allowed, e.g. condition-*)') { |v| @include_ops += v }
         op.on('--exclude-operators LIST', Array, 'Skip these operators (comma-separated; globs allowed)') { |v| @exclude_ops += v }
         op.on('--shard I/N', 'Run only shard I of N (1-based) of the selected mutants') { |v| o.shard = Selection.parse_shard(v) }

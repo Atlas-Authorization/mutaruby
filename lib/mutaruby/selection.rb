@@ -34,7 +34,7 @@ module Mutaruby
 
     # lines / exclude_lines: LineSpec objects (see parse_line_spec). shard: [i, n] or nil.
     def initialize(root:, patterns: [], since: nil, methods: [], exclude_methods: [], lines: [], exclude_lines: [],
-                   shard: nil)
+                   shard: nil, subjects: [])
       @root = File.expand_path(root)
       @patterns = patterns.empty? ? DEFAULT_PATTERNS : patterns
       @since = since
@@ -43,11 +43,13 @@ module Mutaruby
       @lines = lines
       @exclude_lines = exclude_lines
       @shard = shard
+      @subjects = subjects
     end
 
     # True when every mutant of each selected file is run (so stale ignore entries can be detected).
     def complete?
-      @methods.empty? && @exclude_methods.empty? && @lines.empty? && @exclude_lines.empty? && @shard.nil?
+      @methods.empty? && @exclude_methods.empty? && @lines.empty? && @exclude_lines.empty? && @shard.nil? &&
+        @subjects.empty?
     end
 
     # Sorted paths of the matching files, relative to the root.
@@ -64,7 +66,8 @@ module Mutaruby
 
     def filter(mutations)
       kept = mutations.select do |m|
-        (@methods.empty? || @methods.any? { |p| method_match?(p, m.method) }) &&
+        (@subjects.empty? || @subjects.any? { |s| subject_match?(s, m.method) }) &&
+          (@methods.empty? || @methods.any? { |p| method_match?(p, m.method) }) &&
           @exclude_methods.none? { |p| method_match?(p, m.method) } &&
           (@lines.empty? || @lines.any? { |s| s.cover?(m) }) &&
           @exclude_lines.none? { |s| s.cover?(m) }
@@ -81,6 +84,18 @@ module Mutaruby
     # Code outside any method matches no pattern.
     def method_match?(pattern, name)
       name ? File.fnmatch?(pattern, name) || File.fnmatch?(pattern, name.split(/[#.]/).last) : false
+    end
+
+    # A subject names methods by their place in the code:
+    #   "Foo#bar", "Foo.bar"      one method (instance, singleton); globs allowed: "Foo#*", "Foo.*", "Foo#to_*"
+    #   "Foo", "Foo::Bar"         every method of that namespace and of the namespaces nested in it
+    #   "Foo*"                    a glob over namespaces ("Foo*" matches Foo, FooBar and Foo::Baz)
+    def subject_match?(subject, name)
+      return false unless name
+      return File.fnmatch?(subject, name) if subject.match?(/[#.]/)
+
+      namespace = name.split(/[#.]/).first
+      namespace.start_with?("#{subject}::") || File.fnmatch?(subject, namespace)
     end
 
     # Files changed relative to a git ref: committed, staged and unstaged edits, plus new untracked files.

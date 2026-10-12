@@ -3,6 +3,26 @@
 All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] - 2026-10-12
+
+### Added
+
+- `--coverage`: coverage-based test selection. The baseline run records, with Ruby's Coverage API and the test
+  framework's per-test hooks, which tests execute which lines; each mutant then runs only those tests (Minitest and
+  RSpec), and falls back to the whole command for load-time code, unreached lines and other test commands. The
+  summary and the JSON report show how many mutants ran a subset.
+- `--subject`: select methods by their place in the code (`Foo#bar`, `Foo.bar`, `Foo#*`, `Foo.*`, `Foo` with its
+  nested namespaces, `Foo*`).
+- Eight operators: `block-removal`, `method-swap`, `element-removal`, `regexp-never-match`, `yield-removal`,
+  `super-removal`, `when-removal`, `rescue-removal`.
+- `--unparser`: render rebuilt nodes (`element-removal`) with the MIT-licensed `unparser` gem, an optional extra.
+  Text splicing, with its self-check, stays the default.
+
+### Changed
+
+- The README's comparison credits mutant as the mature reference implementation and states that mutaruby is an
+  independent, clean-room implementation that shares no code with it.
+
 ## [0.2.0] - 2026-10-12
 
 ### Added
@@ -71,6 +91,7 @@ First release.
   reason, ambiguity and staleness checks, `--strict-ignore` and `--suggest-ignore`.
 - Human, JSON and JUnit XML reports, a mutation score and `--fail-under` for CI.
 
+[0.3.0]: https://github.com/Atlas-Authorization/mutaruby/releases/tag/v0.3.0
 [0.2.0]: https://github.com/Atlas-Authorization/mutaruby/releases/tag/v0.2.0
 [0.1.1]: https://github.com/Atlas-Authorization/mutaruby/releases/tag/v0.1.1
 [0.1.0]: https://github.com/Atlas-Authorization/mutaruby/releases/tag/v0.1.0
