@@ -24,8 +24,8 @@
 
 - file: lib/mutaruby/runner.rb
   operator: argument-removal
-  line: "Outcome = Struct.new(:mutation, :status, :seconds, :ignore, keyword_init: true) do"
-  mutation: ":mutation, :status, :seconds, :ignore, keyword_init: true => :mutation, :status, :seconds, :ignore"
+  line: "Outcome = Struct.new(:mutation, :status, :seconds, :ignore, :tests, keyword_init: true) do"
+  mutation: ":mutation, :status, :seconds, :ignore, :tests, keyword_init: true => :mutation, :status, :seconds, :ignore, :tests"
   reason: >-
     Since Ruby 3.2 a Struct without keyword_init accepts keyword arguments too, so the mutant behaves the same on the
     Ruby running the self-test. keyword_init: true is required on Ruby 3.1, which CI covers.
