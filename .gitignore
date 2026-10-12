@@ -1,0 +1,7 @@
+/pkg/
+/*.gem
+/Gemfile.lock
+/mutaruby-self.json
+/mutaruby-self.xml
+/coverage/
+/tmp/

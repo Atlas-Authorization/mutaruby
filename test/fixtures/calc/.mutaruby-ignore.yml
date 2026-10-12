@@ -1,0 +1,7 @@
+# Equivalent mutants of the fixture project.
+- file: lib/calc.rb
+  operator: comparison
+  line: "return 0 if n < 0"
+  method: "Calc#clamp_low"
+  mutation: "< => <="
+  reason: "for n == 0 both versions return 0"
