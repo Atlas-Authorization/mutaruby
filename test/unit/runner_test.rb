@@ -326,8 +326,10 @@ class RunnerTest < Minitest::Test
         sleep 0.02 until pids.call.size == 2
         sleep 0.1
         t0 = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        SlowRestore.delay = 0.5 # a worker still busy after its run is killed: the runner must wait for it
         t.raise(Interrupt)
         assert_raises(Interrupt) { t.join }
+        SlowRestore.delay = nil
         assert_operator Process.clock_gettime(Process::CLOCK_MONOTONIC) - t0, :<, 8, 'the run stops without finishing the queue'
         assert_equal [false, false], runner.instance_variable_get(:@threads).map(&:alive?), 'workers are stopped'
         started = pids.call
@@ -338,6 +340,22 @@ class RunnerTest < Minitest::Test
       end
     end
   end
+
+  # Makes a worker take a while to restore its sandbox after a run (only while `delay` is set).
+  module SlowRestore
+    class << self
+      attr_accessor :delay
+    end
+
+    def with_file(*args)
+      super(*args) do
+        result = yield
+        sleep SlowRestore.delay if SlowRestore.delay
+        result
+      end
+    end
+  end
+  Mutaruby::Sandbox.prepend(SlowRestore)
 
   # An IO that records flushes.
   class Recorder < StringIO
@@ -474,6 +492,23 @@ class RunnerTest < Minitest::Test
     with_project('lib/k.rb' => "X = [1,  2]\n") do |root|
       plan = Mutaruby::Runner.new(options(root: root, command: ok, operators: ['element-removal']), out: StringIO.new).plan
       assert_equal ['1, 2 => 2', '1, 2 => 1'], plan[:mutations].map(&:change)
+    end
+  end
+
+  # Interrupted during the baseline (before any worker exists): the interrupt propagates and nothing is left behind.
+  def test_interrupt_during_the_baseline
+    with_tmpdir do |tmp|
+      with_project(LIB) do |root|
+        cmd = rb(%(File.write("#{tmp}/base-\#{Process.pid}", ""); sleep 30))
+        runner = Mutaruby::Runner.new(options(root: root, command: cmd), out: StringIO.new)
+        t = Thread.new { runner.run }
+        t.report_on_exception = false
+        sleep 0.02 until Dir[File.join(tmp, 'base-*')].any?
+        t.raise(Interrupt)
+        assert_raises(Interrupt) { t.join }
+        assert process_gone?(Dir[File.join(tmp, 'base-*')].first[/\d+\z/].to_i)
+        assert_empty sandboxes_in(tmp)
+      end
     end
   end
 end

@@ -94,7 +94,11 @@ module Mutaruby
                  stale: stale, warnings: p[:warnings], baseline_seconds: base.seconds, timeout: timeout,
                  jobs: jobs, seconds: monotonic - t0, complete: p[:complete], coverage: p[:coverage]&.framework)
     rescue Interrupt
+      # Workers see @stop and start no new mutant; the runs in flight are killed; then the workers finish, before
+      # their sandboxes go.
+      @stop = true
       cmd.kill_all
+      @threads&.each(&:join)
       raise
     ensure
       sandboxes.each(&:cleanup)
@@ -142,7 +146,7 @@ module Mutaruby
       lock = Mutex.new
       @threads = sandboxes.map do |box|
         Thread.new do
-          while (m = next_mutation(queue))
+          while !@stop && (m = next_mutation(queue))
             o = evaluate(m, box, plan, cmd, timeout)
             lock.synchronize do
               results << o
@@ -151,12 +155,7 @@ module Mutaruby
           end
         end
       end
-      begin
-        @threads.each(&:join)
-      rescue Interrupt
-        @threads.each(&:kill)
-        raise
-      end
+      @threads.each(&:join)
       @out.puts if @o.progress && results.any?
       results.sort_by { |o| o.mutation.id }
     end

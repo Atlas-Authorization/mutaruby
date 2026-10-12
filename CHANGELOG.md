@@ -18,6 +18,12 @@ All notable changes to this project are documented here. The format follows
 - `--unparser`: render rebuilt nodes (`element-removal`) with the MIT-licensed `unparser` gem, an optional extra.
   Text splicing, with its self-check, stays the default.
 
+### Fixed
+
+- An interrupted run starts no new mutant and waits for its workers to finish before it removes their sandboxes.
+- With `--coverage`, Ruby processes started by the tests themselves (a test that runs another suite) are neither
+  recorded nor filtered, and launcher processes (`bundle exec`, `rake`) do not overwrite the map.
+
 ### Changed
 
 - The README's comparison credits mutant as the mature reference implementation and states that mutaruby is an
