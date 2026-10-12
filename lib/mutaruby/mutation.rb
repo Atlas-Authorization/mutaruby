@@ -13,9 +13,17 @@ module Mutaruby
   #   text       the complete mutated file
   Mutation = Struct.new(:id, :file, :operator, :orig, :repl, :lineno, :line_text, :occurrence, :method, :text,
                         keyword_init: true) do
-    def short(str, max = 80)
+    LABEL_MAX = 80
+
+    # Whitespace runs collapsed to one space, ends stripped.
+    def self.squeeze(text)
+      text.gsub(/\s+/, ' ').strip
+    end
+
+    # One-line form of a source slice, cut to LABEL_MAX characters.
+    def short(str)
       s = str.gsub(/\s+/, ' ')
-      s.length > max ? "#{s[0, max - 3]}..." : s
+      s.length > LABEL_MAX ? "#{s[0, LABEL_MAX - 3]}..." : s
     end
 
     # Human label: "comparison: > => >="
@@ -23,26 +31,21 @@ module Mutaruby
       "#{operator}: #{short(orig)} => #{short(repl)}"
     end
 
-    # Normalised "orig => repl" (whitespace collapsed); the optional `mutation` field of an ignore entry.
+    # "orig => repl", squeezed; the optional `mutation` field of an ignore entry.
     def change
-      "#{orig.gsub(/\s+/, ' ').strip} => #{repl.gsub(/\s+/, ' ').strip}"
+      Mutation.squeeze("#{orig} => #{repl}")
     end
 
     def location
       "#{file}:#{lineno}"
     end
 
-    # The mutated region with one line of context, as a minimal unified-style diff.
+    # The replaced lines and their replacement, as a minimal unified-style diff.
     def diff(original_source)
-      lines = original_source.lines
-      mlines = text.lines
       i = lineno - 1
-      orig_n = orig.count("\n") + 1
-      repl_n = repl.count("\n") + 1
-      out = []
-      (lines[i, orig_n] || []).each { |l| out << "- #{l.chomp}" }
-      (mlines[i, repl_n] || []).each { |l| out << "+ #{l.chomp}" }
-      out.join("\n")
+      old = original_source.lines[i, orig.count("\n") + 1].map { |l| "- #{l.chomp}" }
+      new = text.lines[i, repl.count("\n") + 1].map { |l| "+ #{l.chomp}" }
+      (old + new).join("\n")
     end
 
     def to_h

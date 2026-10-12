@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="mutaruby" tests="7" failures="2" time="3.257">
+  <testsuite name="mutaruby" tests="7" failures="2" errors="0" skipped="1" time="3.257">
+    <properties><property name="score" value="66.67%"/></properties>
+    <testcase classname="lib/a.rb" name="#0 lib/a.rb:3 logical-swap: &amp;&amp; =&gt; ||" time="0.123"/>
+    <testcase classname="lib/a.rb" name="#1 lib/a.rb:3 comparison: &lt; =&gt; &lt;=" time="0.247">
+      <failure message="survived: comparison: &lt; =&gt; &lt;=" type="survived">-     a &lt; 1 &amp;&amp; a &gt; -b
++     a &lt;= 1 &amp;&amp; a &gt; -b</failure>
+    </testcase>
+    <testcase classname="lib/a.rb" name="#2 lib/a.rb:3 comparison: &gt; =&gt; &gt;=" time="0.37">
+      <system-out>killed by timeout</system-out>
+    </testcase>
+    <testcase classname="lib/a.rb" name="#3 lib/a.rb:3 unary-minus-removal: -b =&gt; b" time="0.494">
+      <skipped message="equivalent: r &amp; &lt;why&gt;"/>
+    </testcase>
+    <testcase classname="lib/b&amp;c.rb" name="#4 lib/b&amp;c.rb:1 arithmetic: - =&gt; +" time="0.617">
+      <failure message="survived: arithmetic: - =&gt; +" type="survived">- X = 1 + 2 - 3 * 4
++ X = 1 + 2 + 3 * 4</failure>
+    </testcase>
+    <testcase classname="lib/b&amp;c.rb" name="#5 lib/b&amp;c.rb:1 arithmetic: + =&gt; -" time="0.741"/>
+    <testcase classname="lib/b&amp;c.rb" name="#6 lib/b&amp;c.rb:1 arithmetic: * =&gt; /" time="0.864"/>
+  </testsuite>
+</testsuites>

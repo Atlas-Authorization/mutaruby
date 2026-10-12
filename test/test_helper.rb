@@ -23,7 +23,7 @@ module TestHelpers
 
   # Builds a throwaway project: { "lib/a.rb" => "..." }. Yields the root and removes it afterwards.
   def with_project(files)
-    Dir.mktmpdir('mutaruby-test-') do |dir|
+    Dir.mktmpdir('mrtest-') do |dir|
       root = File.join(dir, 'proj')
       files.each do |rel, body|
         path = File.join(root, rel)
@@ -34,9 +34,17 @@ module TestHelpers
     end
   end
 
+  # Sets (or, with nil, removes) environment variables for the block and restores them afterwards.
+  def with_env(vars)
+    old = vars.keys.to_h { |k| [k, ENV.fetch(k, nil)] }
+    vars.each { |k, v| v.nil? ? ENV.delete(k) : ENV[k] = v }
+    yield
+  ensure
+    old.each { |k, v| v.nil? ? ENV.delete(k) : ENV[k] = v }
+  end
+
   def options(**kw)
-    Mutaruby::Runner::Options.new(jobs: 2, patterns: [], methods: [], exclude_methods: [], lines: [], exclude_lines: [],
-                                  copy_excludes: [], progress: false, **kw)
+    Mutaruby::Runner::Options.build(jobs: 2, **kw)
   end
 
   def snapshot(root)

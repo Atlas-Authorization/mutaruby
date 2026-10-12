@@ -26,7 +26,7 @@ module Mutaruby
       'loop-condition-false' => 'while c: c -> false',
       'literal-int' => 'n -> n + 1, n - 1, 0, 1 (each distinct value once)',
       'literal-float' => 'x -> 0.0, x + 1.0',
-      'literal-string' => '"abc" -> "", "" -> "mutaruby"',
+      'literal-string' => '"abc" -> "", "" -> "mutaruby" (also single-quoted and %q/%Q strings)',
       'literal-symbol' => ':sym -> :__mutaruby__',
       'literal-boolean' => 'true <-> false',
       'literal-nil' => 'nil -> true',
@@ -62,23 +62,26 @@ module Mutaruby
     DECLARATIONS = %i[require require_relative load autoload attr_reader attr_writer attr_accessor include extend prepend
                       private public protected module_function private_constant public_constant
                       private_class_method public_class_method define_method alias_method raise fail].freeze
-    VISIBILITY = %i[private public protected module_function].freeze
+    # Bare visibility calls (`private` on its own line) are never deleted: that only changes which methods are public.
+    VISIBILITY_CALLS = %i[private public protected module_function].map { |v| Parser::AST::Node.new(:send, [nil, v]) }.freeze
     # Definitions are not deleted as statements: deleting a whole class or method is caught by any test that touches
     # it, and the interesting mutants are inside (method-body-nil and the operators on the body).
     STRUCTURAL = %i[module class sclass def defs].freeze
     PREDICATE_SKIP = %i[block_given? frozen? respond_to? respond_to_missing? nil?].freeze
     DISABLE_MARK = 'mutaruby:disable'
+    MAX_ARGS = 6 # argument-removal skips calls with more arguments than this
 
     attr_reader :errors
 
     # path: file path for messages; rel: path relative to the project root (stored on the mutants).
+    # operators: nil (all) or a list of operator ids.
     def initialize(source, path:, rel: path, operators: nil)
       @src = source
       @path = path
       @rel = rel
-      @operators = operators # nil = all, else a Set of ids
+      @operators = operators
       @valid_encoding = source.valid_encoding?
-      @lines = @valid_encoding ? source.split("\n", -1) : []
+      @lines = @valid_encoding ? source.lines.map(&:strip) : []
       @occurrence = occurrence_index(@lines)
       @errors = []
     end
@@ -97,20 +100,19 @@ module Mutaruby
       ast = Parsing.parse(@path, @src)
       @out = []
       @seen = {}
-      @scope = []  # namespace names ("Foo", "Bar")
-      @meth = []   # enclosing method names, qualified
-      @singleton = 0
-      walk(ast, nil) if ast
+      @scope = []   # namespace names ("Foo", "Bar")
+      @meth = []    # enclosing method names, qualified; @singleton: inside `class << self`
+      walk(ast, nil)
       @out.each_with_index { |m, i| m.id = i }
-      @out
-    rescue Parser::SyntaxError, EncodingError, ArgumentError => e
-      @errors << "#{@path}: cannot parse (#{e.message}); skipped"
+    rescue Parser::SyntaxError => e
+      @errors << "#{@path}: cannot parse (#{e}); skipped"
       []
     end
 
+    # lineno => 1-based index of that line among the identical (stripped) lines of the file.
     def occurrence_index(lines)
       seen = Hash.new(0)
-      lines.each_with_index.to_h { |l, i| [i + 1, seen[l.strip] += 1] }
+      lines.each_with_index.to_h { |l, i| [i + 1, seen[l] += 1] }
     end
 
     def enabled?(op)
@@ -125,7 +127,7 @@ module Mutaruby
       return if orig == repl
 
       lineno = range.line
-      line = @lines[lineno - 1].to_s
+      line = @lines[lineno - 1]
       return if line.include?(DISABLE_MARK)
 
       text = Splicer.splice(@src, range.begin_pos, range.end_pos, orig, repl)
@@ -134,7 +136,7 @@ module Mutaruby
       @seen[text] = true
       return unless Parsing.valid?(@path, text)
 
-      @out << Mutation.new(file: @rel, operator: op, orig: orig, repl: repl, lineno: lineno, line_text: line.strip,
+      @out << Mutation.new(file: @rel, operator: op, orig: orig, repl: repl, lineno: lineno, line_text: line,
                            occurrence: @occurrence[lineno], method: @meth.last, text: text)
     end
 
@@ -151,31 +153,34 @@ module Mutaruby
 
       case node.type
       when :module, :class
-        visit(node, parent)
         @scope.push(src_of(node.children[0]))
-        node.children.each { |c| walk(c, node) }
+        walk_children(node)
         @scope.pop
       when :sclass
-        visit(node, parent)
-        @singleton += 1
-        node.children.each { |c| walk(c, node) }
-        @singleton -= 1
+        outer = @singleton
+        @singleton = true
+        walk_children(node)
+        @singleton = outer
       when :def, :defs
         @meth.push(qualified(node))
         visit(node, parent)
-        node.children.each { |c| walk(c, node) }
+        walk_children(node)
         @meth.pop
       else
         visit(node, parent)
-        node.children.each { |c| walk(c, node) }
+        walk_children(node)
       end
+    end
+
+    def walk_children(node)
+      node.children.each { |c| walk(c, node) }
     end
 
     def qualified(node)
       ns = @scope.join('::')
       if node.type == :defs
         "#{ns.empty? ? src_of(node.children[0]) : ns}.#{node.children[1]}"
-      elsif @singleton.positive?
+      elsif @singleton
         "#{ns}.#{node.children[0]}"
       else
         ns.empty? ? node.children[0].to_s : "#{ns}##{node.children[0]}"
@@ -218,44 +223,31 @@ module Mutaruby
 
     def visit_send(n, parent)
       recv, meth, *args = *n
-      sel = n.loc.selector
       SWAPS.each do |op, table|
-        add(sel, table[meth].to_s, op) if table.key?(meth) && recv && args.size == 1 && sel
+        add(n.loc.selector, table[meth].to_s, op) if table.key?(meth) && args.size == 1
       end
-      if meth == :! && recv
-        add(n.loc.expression, src_of(recv), 'negation-removal')
-      elsif meth == :-@ && recv
-        add(n.loc.expression, src_of(recv), 'unary-minus-removal')
-      end
-      add(n.loc.dot, '.', 'safe-navigation') if n.type == :csend && n.loc.dot
-      if recv.nil? && %i[raise fail].include?(meth)
-        add(n.loc.expression, 'nil', 'raise-removal')
-        return
-      end
-      name = meth.to_s
-      if name.end_with?('?') && !PREDICATE_SKIP.include?(meth)
+      add(n.loc.expression, src_of(recv), 'negation-removal') if meth == :!
+      add(n.loc.expression, src_of(recv), 'unary-minus-removal') if meth == :-@
+      add(n.loc.dot, '.', 'safe-navigation') if n.type == :csend
+      add(n.loc.expression, 'nil', 'raise-removal') if recv.nil? && %i[raise fail].include?(meth)
+      if meth.end_with?('?') && !PREDICATE_SKIP.include?(meth)
         add(n.loc.expression, 'true', 'predicate-true')
         add(n.loc.expression, 'false', 'predicate-false')
       end
-      plain = name.match?(/\A[a-z_]\w*[?!]?\z/) # a named method, not an operator or a writer
+      plain = meth.match?(/\A[a-z_]\w*[?!]?\z/) # a named method, not an operator or a writer
       block_call = parent&.type == :block && parent.children[0].equal?(n)
-      if recv && plain && sel && !block_call
+      if recv && plain && !block_call
         add(n.loc.expression, src_of(recv), 'call-to-receiver')
-        first = args.first
-        add(n.loc.expression, src_of(first), 'call-to-argument') if first && !%i[block_pass splat kwsplat hash].include?(first.type)
+        add(n.loc.expression, src_of(args.first), 'call-to-argument') if args.any?
       end
-      remove_arguments(n, args) if plain && !DECLARATIONS.include?(meth) && args.any? && parent&.type != :masgn
+      remove_arguments(args) if plain && !DECLARATIONS.include?(meth) && args.size.between?(1, MAX_ARGS)
     end
 
-    def remove_arguments(n, args)
-      return if args.size > 6
-
-      first = args.first.loc.expression
-      last = args.last.loc.expression
-      range = first.join(last)
+    def remove_arguments(args)
+      range = args.first.loc.expression.join(args.last.loc.expression)
       args.each_index do |i|
-        rest = args.each_with_index.reject { |_, j| j == i }.map { |a, _| src_of(a) }
-        add(range, rest.join(', '), 'argument-removal')
+        rest = args.reject.with_index { |_, j| j == i }
+        add(range, rest.map { |a| src_of(a) }.join(', '), 'argument-removal')
       end
     end
 
@@ -269,53 +261,47 @@ module Mutaruby
     end
 
     def visit_if(n)
-      cond = n.children[0]
-      return unless cond.is_a?(Parser::AST::Node)
-
+      cond = n.children.first
       add(cond.loc.expression, "!(#{src_of(cond)})", 'condition-negate')
       add(cond.loc.expression, 'true', 'condition-true')
       add(cond.loc.expression, 'false', 'condition-false')
     end
 
     def visit_loop(n)
-      cond = n.children[0]
+      cond = n.children.first
       add(cond.loc.expression, "!(#{src_of(cond)})", 'loop-condition-negate')
       add(cond.loc.expression, 'false', 'loop-condition-false') if %i[while while_post].include?(n.type)
     end
 
     def visit_int(n)
-      v = n.children[0]
-      [v + 1, v - 1, 0, 1].uniq.reject { |x| x == v }.each { |x| add(n.loc.expression, x.to_s, 'literal-int') }
+      v = n.children.first
+      [v + 1, v - 1, 0, 1].each { |x| add(n.loc.expression, x.to_s, 'literal-int') }
     end
 
     def visit_float(n)
-      v = n.children[0]
+      v = n.children.first
       add(n.loc.expression, '0.0', 'literal-float') unless v.zero?
       add(n.loc.expression, (v + 1.0).to_s, 'literal-float') if v.finite?
     end
 
+    # Strings with both delimiters in the source: '...', "...", %q(...), %Q[...]. Not heredocs, not the parts of an
+    # interpolated string, not %w elements, not ?c character literals.
     def visit_str(n, parent)
-      return if parent && %i[dstr xstr dsym regexp].include?(parent.type)
       return if declaration?(parent)
 
-      q = n.loc.respond_to?(:begin) && n.loc.begin ? n.loc.begin.source : nil
-      return unless ['"', "'"].include?(q)
+      open = n.loc.begin if n.loc.respond_to?(:begin)
+      close = n.loc.end if open
+      return unless close
 
-      if n.children[0].empty?
-        add(n.loc.expression, "#{q}mutaruby#{q}", 'literal-string')
-      else
-        add(n.loc.expression, "#{q}#{q}", 'literal-string')
-      end
+      fill = n.children.first.empty? ? 'mutaruby' : ''
+      add(n.loc.expression, "#{open.source}#{fill}#{close.source}", 'literal-string')
     end
 
     def visit_body(n)
-      kids = n.children
-      return unless kids.size > 1
+      return unless n.children.size > 1
 
-      kids.each do |k|
-        next unless k.is_a?(Parser::AST::Node)
-        next if STRUCTURAL.include?(k.type)
-        next if k.type == :send && k.children[0].nil? && VISIBILITY.include?(k.children[1]) && k.children.size == 2
+      n.children.each do |k|
+        next if STRUCTURAL.include?(k.type) || VISIBILITY_CALLS.include?(k)
 
         add(k.loc.expression, 'nil', 'statement-delete')
       end
@@ -323,11 +309,10 @@ module Mutaruby
 
     def visit_def(n)
       body = n.children.last
-      return unless body.is_a?(Parser::AST::Node)
+      return unless body
 
       add(body.loc.expression, 'nil', 'method-body-nil')
-      name = n.type == :def ? n.children[0] : n.children[1]
-      return unless name.to_s.end_with?('?')
+      return unless n.children[n.type == :def ? 0 : 1].end_with?('?')
 
       add(body.loc.expression, 'true', 'method-body-bool')
       add(body.loc.expression, 'false', 'method-body-bool')

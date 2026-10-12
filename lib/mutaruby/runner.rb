@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require 'set'
-require_relative 'generator'
 require_relative 'ignore_file'
 require_relative 'sandbox'
 require_relative 'command'
@@ -31,82 +29,79 @@ module Mutaruby
 
     Options = Struct.new(:root, :command, :patterns, :since, :jobs, :timeout, :timeout_factor, :methods,
                          :exclude_methods, :lines, :exclude_lines, :shard, :ignore_file, :operators, :copy_excludes,
-                         :progress, :keyword_init => true)
+                         :progress, keyword_init: true) do
+      def self.build(**kw)
+        new(root: '.', patterns: [], jobs: 1, timeout_factor: 3.0, methods: [], exclude_methods: [], lines: [],
+            exclude_lines: [], copy_excludes: [], progress: false, **kw)
+      end
+    end
+
+    MARK = { killed: '.', timeout: 'T', survived: 'S', equivalent: 'e' }.freeze
 
     def initialize(opts, out: $stderr)
       @o = opts
       @out = out
-      @root = File.expand_path(opts.root || Dir.pwd)
-      @warnings = []
+      @root = File.expand_path(opts.root)
     end
 
     # Mutants of the selected files after every filter, plus what is needed to report them.
     def plan
-      @plan ||= begin
-        sel = selection
-        files = sel.files
-        sources = files.to_h { |f| [f, File.read(File.join(@root, f), encoding: 'UTF-8')] }
-        all = files.flat_map do |f|
-          g = Generator.new(sources[f], path: File.join(@root, f), rel: f, operators: operator_set)
-          ms = g.mutations
-          @warnings.concat(g.errors)
-          ms
-        end
-        all.each_with_index { |m, i| m.id = i }
-        ignore = load_ignore
-        if ignore
-          errs = ignore.validate(sources)
-          raise Error, "ignore file #{ignore.path}:\n  #{errs.join("\n  ")}" if errs.any?
-        end
-        { files: files, sources: sources, mutations: sel.filter(all), ignore: ignore, complete: sel.complete? && @o.operators.nil? }
+      sel = selection
+      files = sel.files
+      sources = files.to_h { |f| [f, File.read(File.join(@root, f), encoding: 'UTF-8')] }
+      warnings = []
+      all = files.flat_map do |f|
+        g = Generator.new(sources[f], path: File.join(@root, f), rel: f, operators: @o.operators)
+        ms = g.mutations
+        warnings.concat(g.errors)
+        ms
       end
+      all.each_with_index { |m, i| m.id = i }
+      ignore = load_ignore
+      errs = ignore ? ignore.validate(sources) : []
+      raise Error, "ignore file #{ignore.path}:\n  #{errs.join("\n  ")}" if errs.any?
+
+      { files: files, sources: sources, mutations: sel.filter(all), ignore: ignore, warnings: warnings,
+        complete: sel.complete? && @o.operators.nil? }
     end
 
     def run
+      sandboxes = []
+      cmd = Command.new(@o.command, root: @root)
       t0 = monotonic
       p = plan
-      sandboxes = []
-      sandboxes << Sandbox.new(@root, excludes: @o.copy_excludes || [])
-      cmd = Command.new(@o.command, root: @root)
-      base = cmd.run(sandboxes[0].dir, capture: true)
+      first = Sandbox.new(@root, excludes: @o.copy_excludes)
+      sandboxes << first
+      base = cmd.run(first.dir, capture: true)
       unless base.passed?
-        raise BaselineFailed, "the test command fails on the UNMUTATED code (#{base.timeout? ? 'timed out' : "exit #{base.exitstatus}"}); " \
-                              "every mutant would count as killed, so nothing would be measured.\n" \
-                              "command: #{@o.command}\n--- output (tail) ---\n#{base.output}"
+        raise BaselineFailed, "the test command fails on the UNMUTATED code (exit #{base.exitstatus}); every mutant " \
+                              "would count as killed, so nothing would be measured.\ncommand: #{@o.command}\n" \
+                              "--- output (tail) ---\n#{base.output}"
       end
-      timeout = @o.timeout || ((base.seconds * (@o.timeout_factor || 3.0)) + 5).ceil
+      timeout = @o.timeout || ((base.seconds * @o.timeout_factor) + 5).ceil
       outcomes = execute(p, cmd, sandboxes, timeout)
-      stale = []
-      if p[:ignore]
-        matched = outcomes.select { |o| o.status == :equivalent }.map(&:ignore).to_set
-        stale = p[:complete] ? p[:ignore].stale(matched, p[:files]) : []
-      end
+      matched = outcomes.select { |o| o.status == :equivalent }.map(&:ignore)
+      stale = p[:ignore] && p[:complete] ? p[:ignore].stale(matched, p[:files]) : []
       Report.new(root: @root, command: @o.command, files: p[:files], outcomes: outcomes, sources: p[:sources],
-                 stale: stale, warnings: @warnings, baseline_seconds: base.seconds, timeout: timeout,
+                 stale: stale, warnings: p[:warnings], baseline_seconds: base.seconds, timeout: timeout,
                  jobs: jobs, seconds: monotonic - t0, complete: p[:complete])
-    rescue Interrupt, SignalException
-      cmd&.kill_all
+    rescue Interrupt
+      cmd.kill_all
       raise
     ensure
-      sandboxes&.each(&:cleanup)
+      sandboxes.each(&:cleanup)
     end
 
     private
 
     def jobs
-      [@o.jobs || 1, 1].max
+      [@o.jobs, 1].max
     end
 
     def selection
-      Selection.new(root: @root, patterns: @o.patterns || [], since: @o.since, methods: @o.methods || [],
-                    exclude_methods: @o.exclude_methods || [], lines: @o.lines || [],
-                    exclude_lines: @o.exclude_lines || [], shard: @o.shard)
-    end
-
-    def operator_set
-      return nil unless @o.operators
-
-      @o.operators.to_set
+      Selection.new(root: @root, patterns: @o.patterns, since: @o.since, methods: @o.methods,
+                    exclude_methods: @o.exclude_methods, lines: @o.lines, exclude_lines: @o.exclude_lines,
+                    shard: @o.shard)
     end
 
     def load_ignore
@@ -124,30 +119,13 @@ module Mutaruby
       queue = Queue.new
       plan[:mutations].each { |m| queue << m }
       n = [jobs, plan[:mutations].size].min
-      (sandboxes.size...n).each { sandboxes << Sandbox.new(@root, excludes: @o.copy_excludes || []) }
+      sandboxes << Sandbox.new(@root, excludes: @o.copy_excludes) while sandboxes.size < n
       results = []
       lock = Mutex.new
-      threads = Array.new(n) do |w|
+      threads = sandboxes.map do |box|
         Thread.new do
-          box = sandboxes[w]
-          loop do
-            m = begin
-              queue.pop(true)
-            rescue ThreadError
-              break
-            end
-            original = plan[:sources][m.file]
-            r = box.with_file(m.file, m.text, original) do
-              cmd.run(box.dir, timeout: timeout,
-                               env: { 'MUTARUBY_MUTANT_ID' => m.id.to_s, 'MUTARUBY_FILE' => m.file })
-            end
-            entry = plan[:ignore]&.match(m)
-            status = if r.timeout? then :timeout
-                     elsif !r.passed? then :killed
-                     elsif entry then :equivalent
-                     else :survived
-                     end
-            o = Outcome.new(mutation: m, status: status, seconds: r.seconds, ignore: entry)
+          while (m = next_mutation(queue))
+            o = evaluate(m, box, plan, cmd, timeout)
             lock.synchronize do
               results << o
               progress(o)
@@ -157,7 +135,7 @@ module Mutaruby
       end
       begin
         threads.each(&:join)
-      rescue Exception # rubocop:disable Lint/RescueException -- stop the workers, then re-raise
+      rescue Interrupt
         threads.each(&:kill)
         raise
       end
@@ -165,7 +143,24 @@ module Mutaruby
       results.sort_by { |o| o.mutation.id }
     end
 
-    MARK = { killed: '.', timeout: 'T', survived: 'S', equivalent: 'e' }.freeze
+    def next_mutation(queue)
+      queue.pop(true)
+    rescue ThreadError
+      nil
+    end
+
+    def evaluate(m, box, plan, cmd, timeout)
+      r = box.with_file(m.file, m.text, plan[:sources][m.file]) do
+        cmd.run(box.dir, timeout: timeout, env: { 'MUTARUBY_MUTANT_ID' => m.id.to_s, 'MUTARUBY_FILE' => m.file })
+      end
+      entry = plan[:ignore]&.match(m)
+      status = if r.timeout? then :timeout
+               elsif !r.passed? then :killed
+               elsif entry then :equivalent
+               else :survived
+               end
+      Outcome.new(mutation: m, status: status, seconds: r.seconds, ignore: entry)
+    end
 
     def progress(outcome)
       return unless @o.progress

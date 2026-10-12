@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'open3'
+require_relative 'error'
 
 module Mutaruby
   # Which files to mutate and which of their mutants to run.
@@ -21,16 +22,17 @@ module Mutaruby
       to = (m[3] || m[2]).to_i
       raise Error, "bad line spec #{spec.inspect} (FROM > TO)" if from > to
 
-      LineSpec.new(m[1]&.sub(%r{\A\./}, ''), from, to)
+      LineSpec.new(m[1]&.delete_prefix('./'), from, to)
     end
 
     def self.parse_shard(spec)
-      m = spec.to_s.match(%r{\A(\d+)/(\d+)\z})
-      raise Error, "bad --shard #{spec.inspect} (expected I/N, 1 <= I <= N)" unless m && m[2].to_i.positive? && m[1].to_i.between?(1, m[2].to_i)
+      i, n = spec.match(%r{\A(\d+)/(\d+)\z})&.captures&.map(&:to_i)
+      raise Error, "bad --shard #{spec.inspect} (expected I/N, 1 <= I <= N)" unless i&.between?(1, n)
 
-      [m[1].to_i, m[2].to_i]
+      [i, n]
     end
 
+    # lines / exclude_lines: LineSpec objects (see parse_line_spec). shard: [i, n] or nil.
     def initialize(root:, patterns: [], since: nil, methods: [], exclude_methods: [], lines: [], exclude_lines: [],
                    shard: nil)
       @root = File.expand_path(root)
@@ -38,8 +40,8 @@ module Mutaruby
       @since = since
       @methods = methods
       @exclude_methods = exclude_methods
-      @lines = lines.map { |s| s.is_a?(LineSpec) ? s : self.class.parse_line_spec(s) }
-      @exclude_lines = exclude_lines.map { |s| s.is_a?(LineSpec) ? s : self.class.parse_line_spec(s) }
+      @lines = lines
+      @exclude_lines = exclude_lines
       @shard = shard
     end
 
@@ -48,19 +50,16 @@ module Mutaruby
       @methods.empty? && @exclude_methods.empty? && @lines.empty? && @exclude_lines.empty? && @shard.nil?
     end
 
-    # Sorted paths relative to the root.
+    # Sorted paths of the matching files, relative to the root.
     def files
-      found = @patterns.flat_map do |pat|
-        full = File.expand_path(pat, @root)
-        if File.file?(full)
-          [relative(full)]
-        else
-          Dir.glob(pat, base: @root).select { |f| File.file?(File.join(@root, f)) }
-        end
+      found = @patterns.flat_map { |pat| Dir.glob(pat, base: @root) }.map do |f|
+        full = File.expand_path(f, @root)
+        raise Error, "#{f} is outside the project root #{@root}" unless full.start_with?("#{@root}/")
+
+        full.delete_prefix("#{@root}/")
       end
-      found = found.map { |f| f.sub(%r{\A\./}, '') }.uniq.sort
-      found &= changed_files if @since
-      found
+      found = found.select { |f| File.file?(File.join(@root, f)) }.uniq.sort
+      @since ? found & changed_files : found
     end
 
     def filter(mutations)
@@ -73,35 +72,27 @@ module Mutaruby
       return kept unless @shard
 
       i, n = @shard
-      kept.each_with_index.select { |_, idx| idx % n == i - 1 }.map(&:first)
+      kept.select.with_index { |_, idx| idx % n == i - 1 }
     end
 
     private
 
-    def relative(full)
-      full.delete_prefix("#{@root}/")
-    end
-
     # A pattern matches the qualified name ("Calc#add", "Calc.build", "Calc#*") or the bare method name ("add").
+    # Code outside any method matches no pattern.
     def method_match?(pattern, name)
-      return false if name.nil?
-
-      bare = name.split(/[#.]/).last
-      File.fnmatch?(pattern, name) || File.fnmatch?(pattern, bare)
+      name ? File.fnmatch?(pattern, name) || File.fnmatch?(pattern, name.split(/[#.]/).last) : false
     end
 
     # Files changed relative to a git ref: committed, staged and unstaged edits, plus new untracked files.
     def changed_files
-      diff = git('diff', '--name-only', '--relative', @since, '--')
-      untracked = git('ls-files', '--others', '--exclude-standard')
-      (diff + untracked).uniq
+      git('diff', '--name-only', '--relative', @since, '--') + git('ls-files', '--others', '--exclude-standard')
     end
 
     def git(*args)
       out, err, st = Open3.capture3('git', '-C', @root, *args)
       raise Error, "git #{args.join(' ')} failed: #{err.strip}" unless st.success?
 
-      out.split("\n").reject(&:empty?)
+      out.lines(chomp: true)
     end
   end
 end

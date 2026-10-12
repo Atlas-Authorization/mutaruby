@@ -3,6 +3,28 @@
 All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [0.1.1] - 2026-10-12
+
+mutaruby now scores 100% on its own code: every mutant is killed by a test or listed, with a checkable reason, in
+`.mutaruby-ignore.yml`. Getting there found the bugs below.
+
+### Fixed
+
+- Processes that a test run leaves behind (a server, a forked worker) are now killed when the run ends, not only on
+  timeout, so they cannot interfere with the next mutant.
+- A project root given through a symlink (for example under `/tmp` on macOS) was copied into the sandboxes as an
+  empty directory, so the baseline ran without the project.
+- An ignore entry for a removed sole argument (`mutation: "x =>"`) never matched: the mutant's change text had a
+  trailing space. Change texts are now whitespace-normalised the same way on both sides.
+- Captured baseline output is decoded as UTF-8 even when Ruby's default external encoding is something else.
+
+### Changed
+
+- `literal-string` also mutates `%q()` and `%Q[]` strings.
+- `argument-removal` no longer skips calls on the right-hand side of a multiple assignment.
+- Option parsing is available as `Mutaruby::CLI#parse`; `Runner::Options.build` supplies the defaults.
+- Each library file requires what it uses and loads on its own.
+
 ## [0.1.0] - 2026-10-11
 
 First release.
@@ -27,4 +49,5 @@ First release.
   reason, ambiguity and staleness checks, `--strict-ignore` and `--suggest-ignore`.
 - Human, JSON and JUnit XML reports, a mutation score and `--fail-under` for CI.
 
+[0.1.1]: https://github.com/Atlas-Authorization/mutaruby/releases/tag/v0.1.1
 [0.1.0]: https://github.com/Atlas-Authorization/mutaruby/releases/tag/v0.1.0

@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'yaml'
+require_relative 'generator'
 
 module Mutaruby
   # The ignore file lists equivalent mutants: mutants that cannot be killed because they do not change behaviour.
@@ -31,13 +32,20 @@ module Mutaruby
     end
 
     KEYS = %w[file operator line occurrence method mutation lineno reason].freeze
+    REQUIRED = %w[file operator line reason].freeze
+    STRINGS = %w[file operator reason method mutation].freeze
 
     attr_reader :entries, :path
 
     def self.load(path)
-      new(YAML.safe_load(File.read(path), permitted_classes: [], aliases: false), path: path)
+      new(YAML.safe_load(File.read(path)), path: path)
     rescue Psych::SyntaxError => e
-      raise Invalid, "#{path}: not valid YAML (#{e.message})"
+      raise Invalid, "#{path}: not valid YAML (#{e})"
+    end
+
+    # How many lines of `source` read `text` once stripped.
+    def self.count_lines(source, text)
+      source.each_line.count { |l| l.strip == text }
     end
 
     def initialize(data, path: '(ignore file)')
@@ -51,21 +59,19 @@ module Mutaruby
 
     # Static validation against the current sources: { rel_path => source }. Returns error strings.
     def validate(sources)
-      errs = []
-      @entries.each do |e|
+      @entries.filter_map do |e|
         src = sources[e.file]
         next unless src # file not part of this run
 
-        count = src.split("\n", -1).count { |l| l.strip == e.line }
+        count = self.class.count_lines(src, e.line)
         if count.zero?
-          errs << "STALE (the line is no longer in the file; re-review or remove the entry): #{e.label}"
+          "STALE (the line is no longer in the file; re-review or remove the entry): #{e.label}"
         elsif e.occurrence.nil? && count > 1
-          errs << "AMBIGUOUS (the line occurs #{count} times; add `occurrence`): #{e.label}"
+          "AMBIGUOUS (the line occurs #{count} times; add `occurrence`): #{e.label}"
         elsif e.occurrence && e.occurrence > count
-          errs << "STALE (occurrence #{e.occurrence} but the line now occurs #{count} time(s)): #{e.label}"
+          "STALE (occurrence #{e.occurrence} but the line now occurs #{count} time(s)): #{e.label}"
         end
       end
-      errs
     end
 
     # The entry covering this mutant, or nil.
@@ -74,7 +80,7 @@ module Mutaruby
         e.file == mutation.file && e.operator == mutation.operator && e.line == mutation.line_text &&
           (e.occurrence || 1) == mutation.occurrence &&
           (e.method.nil? || e.method == mutation.method) &&
-          (e.mutation.nil? || normalize(e.mutation) == mutation.change)
+          (e.mutation.nil? || e.mutation == mutation.change)
       end
     end
 
@@ -88,44 +94,34 @@ module Mutaruby
     def self.stub_for(mutations, sources)
       mutations.map do |m|
         h = { 'file' => m.file, 'operator' => m.operator, 'line' => m.line_text }
-        count = sources[m.file].to_s.split("\n", -1).count { |l| l.strip == m.line_text }
-        h['occurrence'] = m.occurrence if count > 1
+        h['occurrence'] = m.occurrence if count_lines(sources[m.file], m.line_text) > 1
         h['method'] = m.method if m.method
-        h['mutation'] = m.change
-        h['lineno'] = m.lineno
-        h['reason'] = ''
-        h
+        h.merge('mutation' => m.change, 'lineno' => m.lineno, 'reason' => '')
       end.to_yaml
     end
 
     private
 
-    def normalize(s)
-      s.to_s.gsub(/\s+/, ' ').strip
-    end
-
     def parse_entry(raw, i)
       where = "#{@path}: entry ##{i + 1}"
       raise Invalid, "#{where}: expected a mapping" unless raw.is_a?(Hash)
 
-      unknown = raw.keys.map(&:to_s) - KEYS
+      unknown = raw.keys - KEYS
       raise Invalid, "#{where}: unknown key(s) #{unknown.join(', ')}" if unknown.any?
 
-      %w[file operator line reason].each do |k|
-        v = raw[k]
-        raise Invalid, "#{where}: `#{k}` is required" if v.nil? || v.to_s.strip.empty?
+      REQUIRED.each { |k| raise Invalid, "#{where}: `#{k}` is required" if raw[k].to_s.strip.empty? }
+      STRINGS.each do |k|
+        raise Invalid, "#{where}: `#{k}` must be a string" unless raw[k].nil? || raw[k].is_a?(String)
       end
       %w[occurrence lineno].each do |k|
         v = raw[k]
         raise Invalid, "#{where}: `#{k}` must be a positive integer" unless v.nil? || (v.is_a?(Integer) && v.positive?)
       end
-      unless Generator::OPERATORS.key?(raw['operator'].to_s)
-        raise Invalid, "#{where}: unknown operator #{raw['operator'].inspect}"
-      end
+      raise Invalid, "#{where}: unknown operator #{raw['operator'].inspect}" unless Generator::OPERATORS.key?(raw['operator'])
 
-      Entry.new(file: raw['file'].to_s.sub(%r{\A\./}, ''), operator: raw['operator'].to_s, line: raw['line'].to_s.strip,
-                occurrence: raw['occurrence'], method: raw['method']&.to_s, mutation: raw['mutation']&.to_s,
-                lineno: raw['lineno'], reason: raw['reason'].to_s.strip, index: i)
+      Entry.new(file: raw['file'].delete_prefix('./'), operator: raw['operator'], line: raw['line'].to_s.strip,
+                occurrence: raw['occurrence'], method: raw['method'], mutation: raw['mutation'] && Mutation.squeeze(raw['mutation']),
+                lineno: raw['lineno'], reason: raw['reason'].strip, index: i)
     end
   end
 end

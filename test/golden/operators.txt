@@ -1,0 +1,36 @@
+arithmetic             swap + - * / % ** (a + b -> a - b, a * b -> a / b, a % b -> a * b, a ** b -> a * b)
+comparison             boundary / equality swaps (== <-> !=, < -> <=, <= -> <, > -> >=, >= -> >, <=> -> ==, === -> !=, =~ <-> !~)
+bitwise                swap & | ^ << >> (a & b -> a | b, a << b -> a >> b)
+logical-swap           && <-> ||, and <-> or
+logical-drop-left      a && b -> b, a || b -> b
+logical-drop-right     a && b -> a, a || b -> a
+negation-removal       !x -> x, not x -> x
+unary-minus-removal    -x -> x
+condition-negate       if c / unless c / c ? a : b: c -> !(c)
+condition-true         if c: c -> true
+condition-false        if c: c -> false
+loop-condition-negate  while c / until c: c -> !(c)
+loop-condition-false   while c: c -> false
+literal-int            n -> n + 1, n - 1, 0, 1 (each distinct value once)
+literal-float          x -> 0.0, x + 1.0
+literal-string         "abc" -> "", "" -> "mutaruby" (also single-quoted and %q/%Q strings)
+literal-symbol         :sym -> :__mutaruby__
+literal-boolean        true <-> false
+literal-nil            nil -> true
+literal-array          [a, b] -> []
+literal-hash           { k => v } -> {}
+range-swap             a..b <-> a...b
+return-nil             return x -> return nil
+method-body-nil        def m; body; end -> def m; nil; end
+method-body-bool       def m?; body; end -> true / false (predicate methods only)
+statement-delete       one statement of a multi-statement body -> nil
+argument-removal       f(a, b) -> f(b), f(a) (one argument removed at a time)
+call-to-receiver       recv.m(args) -> recv
+call-to-argument       recv.m(a, ...) -> a
+predicate-true         x.m? -> true
+predicate-false        x.m? -> false
+safe-navigation        a&.m -> a.m
+raise-removal          raise X -> nil (also fail)
+op-assign              swap compound assignment (+= <-> -=, *= <-> /=, |= <-> &=, <<= <-> >>=)
+or-assign              a ||= b -> a = b
+and-assign             a &&= b -> a = b

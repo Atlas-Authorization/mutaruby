@@ -26,7 +26,8 @@ You need Ruby 3.1 or newer on Linux or macOS.
 | `lib/mutaruby/selection.rb` | files, `--since`, method/line filters, shards |
 | `lib/mutaruby/ignore_file.rb` | equivalent-mutant entries and site keys |
 | `lib/mutaruby/reporters.rb` | human, JSON and JUnit output |
-| `test/unit/` | fast tests; also the oracle when mutaruby mutates itself |
+| `test/unit/`, `test/golden/` | unit tests and the exact expected output (help, operator list, reports) |
+| `test/dogfood.rb`, `.mutaruby-ignore.yml` | the oracle and the equivalent mutants for `rake mutate` |
 | `test/e2e/`, `test/fixtures/calc/` | the CLI against a small project with known killed, surviving, equivalent and timeout mutants |
 
 ## Guidelines
@@ -37,8 +38,11 @@ You need Ruby 3.1 or newer on Linux or macOS.
   can kill; operators that are mostly equivalent create noise.
 - **Do not weaken the correctness guarantees** (fresh process per mutant, never writing the working tree, the splice
   self-check, the baseline check). They each have a regression test.
-- **Mutate mutaruby with mutaruby** for non-trivial changes: `bundle exec rake mutate` (use `--line` or `--method` to
-  focus on what you changed) and look at the survivors.
+- **Keep the self-score at 100%.** `bundle exec rake mutate` runs mutaruby on its own code with `test/dogfood.rb` as
+  the oracle (it runs the unit tests that cover the mutated file) and fails on any surviving mutant or stale ignore
+  entry. Kill a survivor with a test; only a true equivalent goes into `.mutaruby-ignore.yml`, with a reason someone
+  can check. A full run takes a while; while you work, focus it with
+  `ruby exe/mutaruby -t "ruby -Ilib -Itest test/dogfood.rb" --line lib/mutaruby/FILE.rb:FROM-TO`.
 - Keep the dependency footprint at `parser` alone.
 
 ## Releasing (maintainers)

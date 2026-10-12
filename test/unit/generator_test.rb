@@ -111,7 +111,7 @@ class GeneratorTest < Minitest::Test
 
   def test_argument_removal
     assert_equal ['a, b => b', 'a, b => a'], changes("f(a, b)\n", 'argument-removal')
-    assert_equal ['a => '], changes("o.f(a)\n", 'argument-removal')
+    assert_equal ['a =>'], changes("o.f(a)\n", 'argument-removal')
     assert_empty changes("require 'x'\nattr_reader :a\nraise E, 'm'\n", 'argument-removal')
   end
 
@@ -204,5 +204,149 @@ class GeneratorTest < Minitest::Test
     long = muts("x = #{'a' * 100} ? 1 : 2\n", operators: ['condition-true']).first
     assert_equal 80, long.short(long.orig).size
     assert long.short(long.orig).end_with?('...')
+  end
+
+  CORPUS = <<~RUBY
+    # é
+    module M
+      def self.f(a, b = 1, *r, k: 2, **o, &blk)
+        return nil if a.nil?
+        x = a&.size || 0
+        y = [a, b].map { |v| v * 2 }
+        z = { a: 1, "b" => -b }
+        raise ArgumentError, 'bad' unless x >= 0 && !y.empty?
+        begin
+          w = x.fdiv(3.5)
+        rescue ZeroDivisionError
+          w = 0.0
+        end
+        (0...x).each { |i| w += i ** 2 }
+        w
+      end
+    end
+  RUBY
+
+  # Properties of every mutant: one edit, never the original text, never a duplicate, always parsable.
+  def test_mutant_properties
+    ms = muts(CORPUS)
+    assert_operator ms.size, :>, 50
+    assert_equal ms.size, ms.map(&:text).uniq.size
+    ms.each do |m|
+      refute_equal CORPUS, m.text
+      assert Mutaruby::Parsing.valid?('c.rb', m.text), m.label
+      prefix = CORPUS.lines.first(m.lineno - 1).join
+      assert m.text.start_with?(prefix), m.label
+    end
+  end
+
+  def test_a_mutant_equal_to_the_original_is_skipped
+    assert_empty changes("def f\n  return nil\nend\n", 'return-nil')
+    assert_empty changes("x if true\n", 'condition-true')
+  end
+
+  def test_identical_mutants_are_kept_once
+    ms = muts("x = a || a\n", operators: %w[logical-drop-left logical-drop-right])
+    assert_equal ['logical-drop-right'], ms.map(&:operator)
+  end
+
+  def test_occurrence_counts_stripped_lines
+    src = "a = 1\nb = 2\n  a = 1\nc = 3\n"
+    ms = muts(src, operators: ['literal-int']).select { |m| m.change == '1 => 2' }
+    assert_equal [[1, 1, 'a = 1'], [3, 2, 'a = 1']], ms.map { |m| [m.lineno, m.occurrence, m.line_text] }
+  end
+
+  def test_mutations_are_built_once
+    g = Mutaruby::Generator.new("def (\n", path: 'bad.rb')
+    assert_same g.mutations, g.mutations
+    assert_equal 1, g.errors.size
+    g = Mutaruby::Generator.new("x = 1\n", path: 'ok.rb')
+    assert_same g.mutations, g.mutations
+  end
+
+  def test_empty_and_comment_only_files
+    assert_empty muts('')
+    assert_empty muts("# nothing\n")
+  end
+
+  def test_strings_in_and_out_of_declarations
+    assert_equal ["'x' => ''"], changes("def self.require = 'x'\n", 'literal-string')
+    assert_equal ["'x' => ''"], changes("'x'\n", 'literal-string')
+    assert_equal ["'x' => ''"], changes("foo('x')\n", 'literal-string')
+    assert_empty changes("require 'x'\nraise 'y'\n", 'literal-string')
+    assert_equal ['%q(abc) => %q()', '%Q[a] => %Q[]', "'x' => ''"],
+                 changes("a = %q(abc)\nb = %Q[a]\nc = \"\#{'x'}\"\n", 'literal-string')
+    assert_empty changes("a = ?a\nb = %w[p]\nc = <<~T\n  t\nT\nd = \"a\#{b}\"\n", 'literal-string')
+  end
+
+  def test_methods_after_a_singleton_class_are_instance_methods
+    src = "class B\n  class << self\n    def t = 1\n  end\n  def after = 2\nend\n"
+    assert_equal ['B.t', 'B#after'], muts(src, operators: ['literal-int']).map(&:method).uniq
+  end
+
+  def test_post_condition_loops_and_explicit_begin
+    src = "begin\n  x\nend while a\nbegin\n  y\nend until b\n"
+    assert_equal ['a => !(a)', 'b => !(b)'], changes(src, 'loop-condition-negate')
+    assert_equal ['a => false'], changes(src, 'loop-condition-false')
+    assert_equal ['a => nil', 'b => nil'], changes("begin\n  a\n  b\nend\n", 'statement-delete')
+  end
+
+  def test_which_symbols_are_mutated
+    assert_equal [':a? => :__mutaruby__', ':b= => :__mutaruby__', ':C => :__mutaruby__'],
+                 changes("x(:a?)\nx(:b=)\nx(:C)\nx(:+)\nx(:\"a b\")\nx(%s(q))\n", 'literal-symbol')
+  end
+
+  def test_collections_without_brackets_are_not_emptied
+    assert_empty changes("a = 1, 2\nb = %w[p q]\nc = []\nd = [ ]\n", 'literal-array')
+    assert_empty changes("f(a: 1)\nb = {}\nc = { }\n", 'literal-hash')
+  end
+
+  def test_compound_assignments
+    assert_equal ['<<= => >>=', '>>= => <<=', '&= => |=', '/= => *='], changes("a <<= 1\na >>= 1\na &= b\na /= 2\n", 'op-assign')
+    assert_empty changes("a **= 2\na %= 2\n", 'op-assign')
+  end
+
+  def test_one_argument_calls_are_not_operators
+    %w[arithmetic comparison bitwise].each { |op| assert_empty changes("o.f(x)\nf(x)\n", op) }
+  end
+
+  def test_skipped_predicates
+    assert_empty changes("x.frozen?\nx.respond_to?(:a)\nx.nil?\nrespond_to_missing?(:a, false)\n", 'predicate-true')
+  end
+
+  def test_operator_calls_and_writers_are_not_plain_calls
+    assert_empty triples("x[1]\nx.y = 1\na + b\n").select { |op, _, _| op.start_with?('call-to', 'argument') }
+    assert_equal ['a.() => a', 'a.(1) => a'], changes("a.()\na.(1)\n", 'call-to-receiver')
+    assert_equal ['a.(1) => 1'], changes("a.()\na.(1)\n", 'call-to-argument')
+  end
+
+  def test_calls_inside_blocks
+    assert_equal ['x.foo(1) => x'], changes("o.each { |x| x.foo(1) }\n", 'call-to-receiver')
+    assert_equal ['o.map(&:x) => o'], changes("o.map(&:x)\n", 'call-to-receiver')
+  end
+
+  def test_argument_removal_limits
+    assert_equal 6, Mutaruby::Generator::MAX_ARGS
+    assert_equal ['a, b, c => b, c', 'a, b, c => a, c', 'a, b, c => a, b'], changes("f(a, b, c)\n", 'argument-removal')
+    assert_equal 6, changes("f(a, b, c, d, e, g)\n", 'argument-removal').size
+    assert_empty changes("f(a, b, c, d, e, g, h)\n", 'argument-removal')
+    assert_equal ['x =>'], changes("a, b = foo(x)\n", 'argument-removal')
+  end
+
+  def test_float_edge_cases
+    assert_equal ['0.00 => 1.0'], changes("x = 0.00\n", 'literal-float')
+    assert_equal ['1e400 => 0.0'], changes("x = 1e400\n", 'literal-float')
+  end
+
+  def test_parenthesised_and_two_statement_bodies
+    assert_empty changes("x = (a)\n", 'statement-delete')
+    assert_equal ['a => nil', 'b => nil'], changes("x = (a; b)\n", 'statement-delete')
+    assert_equal ['a => nil', 'b => nil'], changes("a\nb\n", 'statement-delete')
+    assert_equal ['self.private => nil', 'private :x => nil', 'y => nil'],
+                 changes("self.private\nprivate :x\nprivate\ny\n", 'statement-delete')
+  end
+
+  def test_method_bodies_of_singleton_predicates
+    assert_equal ['x => true', 'x => false'], changes("def self.ok? = x\n", 'method-body-bool')
+    assert_empty triples("def ok?; end\n")
   end
 end

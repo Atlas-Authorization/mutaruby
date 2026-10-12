@@ -1,0 +1,47 @@
+# Equivalent mutants of mutaruby's own code (`rake mutate`). Each reason says why no test can tell the mutant apart.
+
+- file: lib/mutaruby/cli.rb
+  operator: statement-delete
+  line: require 'etc'
+  reason: >-
+    cli.rb loads runner.rb -> sandbox.rb -> tmpdir, and tmpdir itself requires etc, so Etc is defined with or without
+    this line (check: ruby -e 'require "tmpdir"; p defined?(Etc)'). The require stays because cli.rb uses Etc directly.
+
+- file: lib/mutaruby/sandbox.rb
+  operator: statement-delete
+  line: require 'fileutils'
+  reason: >-
+    sandbox.rb also requires tmpdir, which requires fileutils, so FileUtils is defined with or without this line
+    (check: ruby -e 'require "tmpdir"; p defined?(FileUtils)'). The require stays because sandbox.rb uses FileUtils.
+
+- file: lib/mutaruby/command.rb
+  operator: argument-removal
+  line: "Result = Struct.new(:status, :exitstatus, :seconds, :output, keyword_init: true) do"
+  mutation: ":status, :exitstatus, :seconds, :output, keyword_init: true => :status, :exitstatus, :seconds, :output"
+  reason: >-
+    Since Ruby 3.2 a Struct without keyword_init accepts keyword arguments too, so the mutant behaves the same on the
+    Ruby running the self-test. keyword_init: true is required on Ruby 3.1, which CI covers.
+
+- file: lib/mutaruby/runner.rb
+  operator: argument-removal
+  line: "Outcome = Struct.new(:mutation, :status, :seconds, :ignore, keyword_init: true) do"
+  mutation: ":mutation, :status, :seconds, :ignore, keyword_init: true => :mutation, :status, :seconds, :ignore"
+  reason: >-
+    Since Ruby 3.2 a Struct without keyword_init accepts keyword arguments too, so the mutant behaves the same on the
+    Ruby running the self-test. keyword_init: true is required on Ruby 3.1, which CI covers.
+
+- file: lib/mutaruby/command.rb
+  operator: literal-float
+  line: POLL = 0.05
+  mutation: 0.05 => 0.0
+  reason: >-
+    POLL is the sleep between liveness checks while a process group gets its grace period. With 0.0 the wait becomes
+    a busy loop that ends at the same moment (the group exits or the deadline passes); only CPU use differs.
+
+- file: lib/mutaruby/command.rb
+  operator: comparison
+  line: sleep POLL while monotonic < deadline && alive?(pid)
+  mutation: "< => <="
+  reason: >-
+    monotonic is a Float clock reading; the loop ends within one POLL either way, and the two conditions differ only
+    when the reading equals the deadline exactly, which no test can arrange.

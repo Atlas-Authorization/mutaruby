@@ -1,6 +1,14 @@
 # mutaruby
 
+[![CI](https://github.com/Atlas-Authorization/mutaruby/actions/workflows/ci.yml/badge.svg)](https://github.com/Atlas-Authorization/mutaruby/actions/workflows/ci.yml)
+![mutation score on its own code: 100%](https://img.shields.io/badge/self%20mutation%20score-100%25-brightgreen)
+
 Free, MIT-licensed mutation testing for Ruby.
+
+mutaruby is mutation-tested with itself. In version 0.1.1, all 3,619 mutants of its own code are accounted for:
+3,613 are killed by its tests (499 of them by timeout), and the other 6 are true equivalents, each listed in
+[`.mutaruby-ignore.yml`](.mutaruby-ignore.yml) with a reason you can check. `bundle exec rake mutate` reproduces the
+run; it fails on any surviving mutant or stale ignore entry.
 
 mutaruby makes small, deliberate changes to your code, one at a time, and runs your test command against each change.
 If your tests still pass, the change (the *mutant*) **survived**, and that points to code your tests do not really check.
@@ -207,7 +215,7 @@ mutant's, are dropped before anything runs. `--list-operators` prints this list.
 | `loop-condition-false` | a `while` loop never runs | `while i < n` to `while false` |
 | `literal-int` | an integer becomes n+1, n-1, 0 and 1 (each distinct value once) | `retries = 3` to `4`, `2`, `0`, `1` |
 | `literal-float` | a float becomes 0.0 and x+1.0 | `0.5` to `0.0`, `1.5` |
-| `literal-string` | a quoted string becomes `""`; an empty one becomes `"mutaruby"` | `'admin'` to `''` |
+| `literal-string` | a quoted string (`'...'`, `"..."`, `%q()`, `%Q[]`) becomes empty; an empty one becomes `"mutaruby"` | `'admin'` to `''` |
 | `literal-symbol` | a `:symbol` becomes `:__mutaruby__` | `:read` to `:__mutaruby__` |
 | `literal-boolean` | `true` and `false` | `strict = true` to `strict = false` |
 | `literal-nil` | `nil` becomes `true` | `cache = nil` to `cache = true` |
@@ -376,9 +384,10 @@ text. If it is not, the run aborts rather than testing a mutant in the wrong pla
 mutant would be "killed" and the score would mean nothing, so mutaruby stops with exit status 2 and shows the tail of
 the output. The baseline's duration also sets the default timeout.
 
-**Timeouts kill the whole process group.** Each run is the leader of its own process group. On timeout the group gets
-`SIGTERM`, then `SIGKILL` two seconds later, so a hung child (a forked server, a parallel test worker) does not
-outlive its mutant.
+**No run outlives its mutant.** Each run is the leader of its own process group. When the run times out, and also
+when it finishes normally, whatever is left of the group (a hung test, a forked server, a parallel test worker) gets
+`SIGTERM`, then `SIGKILL` if it is still there two seconds later. Nothing from one mutant's run can interfere with
+the next one.
 
 **Site keys instead of line numbers** for the ignore file; see [above](#equivalent-mutants-the-ignore-file).
 

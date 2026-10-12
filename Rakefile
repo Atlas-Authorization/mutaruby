@@ -5,7 +5,7 @@ require 'rbconfig'
 ruby = RbConfig.ruby
 
 namespace :test do
-  desc 'Fast unit tests (also the oracle for `rake mutate`)'
+  desc 'Unit tests'
   task(:unit) { sh ruby, '-Ilib', '-Itest', 'test/run_unit.rb' }
 
   desc 'End-to-end: the CLI against test/fixtures/calc'
@@ -15,9 +15,10 @@ end
 desc 'All tests'
 task test: %w[test:unit test:e2e]
 
-desc 'Run mutaruby on its own code, with the unit tests as the oracle'
+desc 'Run mutaruby on its own code (oracle: test/dogfood.rb); fails below 100% or on a stale ignore entry'
 task :mutate do
-  sh ruby, 'exe/mutaruby', '-t', "#{ruby} -Ilib -Itest test/run_unit.rb", '--json', 'mutaruby-self.json'
+  sh ruby, 'exe/mutaruby', '-t', "#{ruby} -Ilib -Itest test/dogfood.rb", '--fail-under', '100', '--strict-ignore',
+     '--json', 'mutaruby-self.json'
 end
 
 task default: :test

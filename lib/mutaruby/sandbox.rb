@@ -12,14 +12,17 @@ module Mutaruby
   # is written back before the next mutant.
   class Sandbox
     DEFAULT_EXCLUDES = %w[.git coverage].freeze
+    PREFIX = 'mutaruby-'
 
     attr_reader :dir
 
-    def initialize(root, excludes: [], prefix: 'mutaruby-')
-      @root = File.expand_path(root)
+    def initialize(root, excludes: [])
+      # The real path: Find does not descend into a symlink, so a root reached through one (/tmp on macOS) would
+      # otherwise be copied as an empty directory.
+      @root = File.realpath(root)
       @excludes = DEFAULT_EXCLUDES + excludes
-      @prefix = prefix
-      @base = Dir.mktmpdir(prefix)
+      @base = Dir.mktmpdir(PREFIX)
+      @tmp_parent = File.realpath(File.dirname(@base))
       @dir = File.join(@base, File.basename(@root))
       copy_tree
     end
@@ -31,10 +34,12 @@ module Mutaruby
     # Writes `text` to `rel` inside the sandbox, yields, and restores the original bytes afterwards (also on error).
     def with_file(rel, text, original)
       target = path(rel)
-      File.binwrite(target, text)
-      yield
-    ensure
-      File.binwrite(target, original) if target
+      begin
+        File.binwrite(target, text)
+        yield
+      ensure
+        File.binwrite(target, original)
+      end
     end
 
     def cleanup
@@ -51,10 +56,10 @@ module Mutaruby
     end
 
     # A sandbox directory (this one or another worker's). When the temporary directory lies inside the project (for
-    # example TMPDIR=./tmp), copying it would copy the sandbox into itself.
+    # example TMPDIR=./tmp), copying it would copy the sandbox into itself. Paths found under the real root are real.
     def sandbox?(path)
-      File.basename(path).start_with?(@prefix) && File.directory?(path) &&
-        File.realpath(File.dirname(path)) == File.realpath(File.dirname(@base))
+      File.directory?(path) && File.basename(path).start_with?(PREFIX) &&
+        File.dirname(path) == @tmp_parent
     end
 
     def copy_tree
@@ -63,17 +68,14 @@ module Mutaruby
         next if src == @root
 
         rel = src.delete_prefix("#{@root}/")
-        if excluded?(rel) || sandbox?(src)
-          Find.prune
-          next
-        end
+        Find.prune if excluded?(rel) || sandbox?(src)
         dest = File.join(@dir, rel)
         st = File.lstat(src)
         if st.symlink?
           File.symlink(File.readlink(src), dest)
         elsif st.directory?
           FileUtils.mkdir_p(dest)
-        elsif st.file?
+        elsif st.file? # not sockets, FIFOs or devices: copying a FIFO would block
           FileUtils.cp(src, dest, preserve: true)
         end
       end

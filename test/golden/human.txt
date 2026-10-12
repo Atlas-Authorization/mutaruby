@@ -1,0 +1,22 @@
+Surviving mutants (not detected by the test command):
+
+  lib/a.rb:3 in A#f  [#1]
+    comparison: < => <=
+    -     a < 1 && a > -b
+    +     a <= 1 && a > -b
+
+  lib/b&c.rb:1  [#4]
+    arithmetic: - => +
+    - X = 1 + 2 - 3 * 4
+    + X = 1 + 2 + 3 * 4
+
+warning: STALE ignore entry (no surviving mutant at this site; remove or re-review it): #2 lib/a.rb:3 comparison "a < 1 && a > -b" in A#f
+warning: w1
+mutaruby summary
+  files:       2
+  mutants:     7
+  killed:      4 (1 by timeout)
+  survived:    2
+  equivalent:  1 (ignore file)
+  score:       66.67%  = killed / (mutants - equivalent)
+  time:        3.3s (baseline 1.23s, timeout 9s, jobs 2)

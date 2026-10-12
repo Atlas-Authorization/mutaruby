@@ -1,0 +1,147 @@
+{
+  "tool": "mutaruby",
+  "version": "VERSION",
+  "command": "rake test",
+  "score": 66.6667,
+  "complete": true,
+  "counts": {
+    "mutants": 7,
+    "killed": 4,
+    "timeout": 1,
+    "survived": 2,
+    "equivalent": 1
+  },
+  "files": [
+    "lib/a.rb",
+    "lib/b&c.rb"
+  ],
+  "baseline_seconds": 1.235,
+  "timeout": 9,
+  "mutants": [
+    {
+      "id": 0,
+      "file": "lib/a.rb",
+      "lineno": 3,
+      "operator": "logical-swap",
+      "method": "A#f",
+      "line_text": "a < 1 && a > -b",
+      "occurrence": 1,
+      "orig": "&&",
+      "repl": "||",
+      "change": "&& => ||",
+      "label": "logical-swap: && => ||",
+      "status": "killed",
+      "seconds": 0.123,
+      "ignore_reason": null
+    },
+    {
+      "id": 1,
+      "file": "lib/a.rb",
+      "lineno": 3,
+      "operator": "comparison",
+      "method": "A#f",
+      "line_text": "a < 1 && a > -b",
+      "occurrence": 1,
+      "orig": "<",
+      "repl": "<=",
+      "change": "< => <=",
+      "label": "comparison: < => <=",
+      "status": "survived",
+      "seconds": 0.247,
+      "ignore_reason": null
+    },
+    {
+      "id": 2,
+      "file": "lib/a.rb",
+      "lineno": 3,
+      "operator": "comparison",
+      "method": "A#f",
+      "line_text": "a < 1 && a > -b",
+      "occurrence": 1,
+      "orig": ">",
+      "repl": ">=",
+      "change": "> => >=",
+      "label": "comparison: > => >=",
+      "status": "timeout",
+      "seconds": 0.37,
+      "ignore_reason": null
+    },
+    {
+      "id": 3,
+      "file": "lib/a.rb",
+      "lineno": 3,
+      "operator": "unary-minus-removal",
+      "method": "A#f",
+      "line_text": "a < 1 && a > -b",
+      "occurrence": 1,
+      "orig": "-b",
+      "repl": "b",
+      "change": "-b => b",
+      "label": "unary-minus-removal: -b => b",
+      "status": "equivalent",
+      "seconds": 0.494,
+      "ignore_reason": "r & <why>"
+    },
+    {
+      "id": 4,
+      "file": "lib/b&c.rb",
+      "lineno": 1,
+      "operator": "arithmetic",
+      "method": null,
+      "line_text": "X = 1 + 2 - 3 * 4",
+      "occurrence": 1,
+      "orig": "-",
+      "repl": "+",
+      "change": "- => +",
+      "label": "arithmetic: - => +",
+      "status": "survived",
+      "seconds": 0.617,
+      "ignore_reason": null
+    },
+    {
+      "id": 5,
+      "file": "lib/b&c.rb",
+      "lineno": 1,
+      "operator": "arithmetic",
+      "method": null,
+      "line_text": "X = 1 + 2 - 3 * 4",
+      "occurrence": 1,
+      "orig": "+",
+      "repl": "-",
+      "change": "+ => -",
+      "label": "arithmetic: + => -",
+      "status": "killed",
+      "seconds": 0.741,
+      "ignore_reason": null
+    },
+    {
+      "id": 6,
+      "file": "lib/b&c.rb",
+      "lineno": 1,
+      "operator": "arithmetic",
+      "method": null,
+      "line_text": "X = 1 + 2 - 3 * 4",
+      "occurrence": 1,
+      "orig": "*",
+      "repl": "/",
+      "change": "* => /",
+      "label": "arithmetic: * => /",
+      "status": "killed",
+      "seconds": 0.864,
+      "ignore_reason": null
+    }
+  ],
+  "stale_ignores": [
+    {
+      "file": "lib/a.rb",
+      "operator": "comparison",
+      "line": "a < 1 && a > -b",
+      "method": "A#f",
+      "lineno": 3,
+      "reason": "gone"
+    }
+  ],
+  "warnings": [
+    "w1"
+  ]
+}

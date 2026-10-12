@@ -1,0 +1,35 @@
+Usage: mutaruby --test COMMAND [options] [FILE|GLOB ...]   (default: lib/**/*.rb)
+
+Test oracle:
+    -t, --test COMMAND               Shell command that runs the tests; exit 0 = mutant survived, non-zero = killed
+    -C, --root DIR                   Project root (copied for every worker; default: current directory)
+    -j, --jobs N                     Parallel workers (default: NPROC)
+        --timeout SECONDS            Per-mutant timeout (default: baseline time x factor + 5s)
+        --timeout-factor F           Multiplier on the baseline time for the default timeout (default: 3)
+        --copy-exclude GLOB          Do not copy matching paths into the sandboxes (repeatable; .git and coverage are always skipped)
+
+Selection:
+        --since REF                  Only files changed since a git ref (committed, staged, unstaged, untracked)
+        --method PATTERN             Only mutants inside matching methods ("Calc#add", "Calc#*", "add"; repeatable)
+        --exclude-method PATTERN     Skip mutants inside matching methods (repeatable)
+        --line SPEC                  Only mutants on these lines: [FILE:]LINE or [FILE:]FROM-TO (repeatable)
+        --exclude-line SPEC          Skip mutants on these lines (repeatable)
+        --operators LIST             Only these operators (comma-separated; globs allowed, e.g. condition-*)
+        --exclude-operators LIST     Skip these operators (comma-separated; globs allowed)
+        --shard I/N                  Run only shard I of N (1-based) of the selected mutants
+
+Equivalent mutants:
+        --ignore-file PATH           Ignore file (default: .mutaruby-ignore.yml in the root, if present)
+        --strict-ignore              Fail (exit 1) when an ignore entry matches no surviving mutant
+        --suggest-ignore             Print ignore-file stubs for the surviving mutants (fill in each reason)
+
+Output:
+        --json PATH                  Write a JSON report ("-" = stdout)
+        --junit PATH                 Write a JUnit-style XML report ("-" = stdout)
+        --fail-under PERCENT         Exit 1 when the mutation score is below PERCENT
+        --list                       List the selected mutants without running anything
+        --list-operators             List the mutation operators
+    -q, --quiet                      No progress marks
+    -v, --verbose                    Also list timeouts and equivalent mutants
+        --version                    Print the version
+    -h, --help                       Show this help

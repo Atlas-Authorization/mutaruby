@@ -1,40 +1,36 @@
 # frozen_string_literal: true
 
 require 'parser'
+require_relative 'error'
 
 module Mutaruby
   # Picks the newest `parser` grammar that is not newer than the running Ruby. `parser/current` prints a warning on
   # Rubies it does not know yet; choosing the class ourselves keeps the output clean and the behaviour explicit.
   module Parsing
+    OLDEST = 31 # Ruby 3.1
+
     class << self
       def parser_class
-        @parser_class ||= begin
-          major, minor = RUBY_VERSION.split('.').map(&:to_i)
-          wanted = (major * 10) + minor
-          found = nil
-          wanted.downto(31) do |v|
-            begin
-              require "parser/ruby#{v}"
-              found = Parser.const_get("Ruby#{v}")
-              break
-            rescue LoadError, NameError
-              next
-            end
-          end
-          found || raise(Error, "no parser grammar available for Ruby #{RUBY_VERSION}")
-        end
+        @parser_class ||= grammar_for(RUBY_VERSION)
       end
 
-      def buffer(path, source)
-        Parser::Source::Buffer.new(path, source: source)
+      # The parser class for a Ruby version string ("3.3.5" -> Parser::Ruby33), falling back to older grammars.
+      def grammar_for(version)
+        major, minor = version.split('.').map(&:to_i)
+        ((major * 10) + minor).downto(OLDEST) do |v|
+          require "parser/ruby#{v}"
+          return Parser.const_get("Ruby#{v}")
+        rescue LoadError
+          # this `parser` release has no grammar for v; try the next older one
+        end
+        raise Error, "no parser grammar available for Ruby #{version}"
       end
 
       # Parse `source`; returns the AST or raises Parser::SyntaxError.
       def parse(path, source)
         p = parser_class.new
         p.diagnostics.all_errors_are_fatal = true
-        p.diagnostics.ignore_warnings = true
-        p.parse(buffer(path, source))
+        p.parse(Parser::Source::Buffer.new(path, source: source))
       end
 
       def valid?(path, source)

@@ -12,55 +12,61 @@ module Mutaruby
     end
 
     OUTPUT_TAIL = 4000
+    # After SIGTERM, a process group gets this many seconds to exit before SIGKILL.
+    KILL_GRACE = 2
+    POLL = 0.05
 
-    def initialize(command, root:, env: {})
+    def initialize(command, root:, kill_grace: KILL_GRACE)
       @command = command
+      @kill_grace = kill_grace
       @root = File.expand_path(root)
-      @env = env
-      @live = {}
+      @live = []
       @lock = Mutex.new
     end
 
     # Kills every run still in progress (used when mutaruby itself is interrupted: the runs live in their own process
     # groups, so a Ctrl-C in the terminal does not reach them).
     def kill_all
-      pids = @lock.synchronize { @live.keys }
-      pids.each { |pid| kill_group(pid) }
+      @lock.synchronize { @live.each { |pid| kill_group(pid) } }
     end
 
     # dir: sandbox project dir. timeout: seconds (nil = none). capture: keep an output tail (for the baseline report).
     def run(dir, timeout: nil, env: {}, capture: false)
-      log = capture ? Tempfile.new('mutaruby-out') : nil
-      out = log ? log.path : File::NULL
-      started = monotonic
-      pid = Process.spawn(child_env(dir).merge(@env).merge(env), '/bin/sh', '-c', @command,
-                          chdir: dir, pgroup: true, in: File::NULL, out: out, err: out)
-      @lock.synchronize { @live[pid] = true }
-      waiter = Process.detach(pid)
-      timed_out = waiter.join(timeout).nil? if timeout
-      if timed_out
-        kill_group(pid)
-        waiter.join
+      return execute(dir, timeout, env, File::NULL) unless capture
+
+      Tempfile.create do |log|
+        result = execute(dir, timeout, env, log)
+        log.rewind
+        result.output = tail(log.read)
+        result
       end
+    end
+
+    private
+
+    def execute(dir, timeout, env, out)
+      started = monotonic
+      pid = Process.spawn(child_env(dir).merge(env), '/bin/sh', '-c', @command,
+                          chdir: dir, pgroup: true, in: File::NULL, out: out, err: out)
+      @lock.synchronize { @live << pid }
+      waiter = Process.detach(pid)
+      timed_out = waiter.join(timeout).nil?
+      # A timed-out run, and anything a finished run left behind (a server, a forked worker), must not outlive it.
+      kill_group(pid)
       st = waiter.value
       @lock.synchronize { @live.delete(pid) }
       status = if timed_out then :timeout
                elsif st.success? then :passed
                else :failed
                end
-      Result.new(status: status, exitstatus: st.exitstatus, seconds: monotonic - started,
-                 output: log ? tail(log.path) : nil)
-    ensure
-      log&.close!
+      Result.new(status: status, exitstatus: st.exitstatus, seconds: monotonic - started)
     end
-
-    private
 
     # Bundler exports the ORIGINAL Gemfile path to child processes. Left as is, `bundle exec` in the sandbox would
     # resolve the Gemfile (and a `gemspec` line's lib/ directory) from the user's checkout and test the unmutated code.
+    # The per-mutant variables are always set or cleared explicitly, so a mutaruby run nested inside another one's
+    # test command does not inherit the outer run's values.
     def child_env(dir)
-      # The per-mutant variables are always set or cleared explicitly, so a mutaruby run nested inside another one's
-      # test command does not inherit the outer run's mutant id.
       env = { 'MUTARUBY' => '1', 'MUTARUBY_MUTANT_ID' => nil, 'MUTARUBY_FILE' => nil }
       %w[BUNDLE_GEMFILE BUNDLE_APP_CONFIG].each do |k|
         v = ENV.fetch(k, nil)
@@ -72,13 +78,18 @@ module Mutaruby
       env
     end
 
+    # SIGTERM to the whole group, up to kill_grace seconds to exit, then SIGKILL.
     def kill_group(pid)
-      Process.kill('TERM', -pid)
-      deadline = monotonic + 2
-      sleep 0.05 while monotonic < deadline && alive?(pid)
-      Process.kill('KILL', -pid)
+      signal_group('TERM', pid)
+      deadline = monotonic + @kill_grace
+      sleep POLL while monotonic < deadline && alive?(pid)
+      signal_group('KILL', pid)
+    end
+
+    def signal_group(sig, pid)
+      Process.kill(sig, -pid)
     rescue Errno::ESRCH, Errno::EPERM
-      nil
+      # the group is already gone
     end
 
     def alive?(pid)
@@ -88,10 +99,8 @@ module Mutaruby
       false
     end
 
-    def tail(path)
-      s = File.binread(path)
-      s = s[-OUTPUT_TAIL..] if s.bytesize > OUTPUT_TAIL
-      s.force_encoding(Encoding::UTF_8).scrub
+    def tail(bytes)
+      bytes.byteslice([bytes.bytesize - OUTPUT_TAIL, 0].max..).force_encoding(Encoding::UTF_8).scrub
     end
 
     def monotonic

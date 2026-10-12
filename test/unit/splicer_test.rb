@@ -18,7 +18,8 @@ class SplicerTest < Minitest::Test
     b = src.b.index('+')
     refute_equal src.index('+'), b
     err = assert_raises(Mutaruby::SpliceError) { Mutaruby::Splicer.splice(src, b, b + 1, '+', '-') }
-    assert_match(/self-check failed/, err.message)
+    assert_equal "splice self-check failed at offsets #{b}...#{b + 1}: the slice is \" \", the node's source is \"+\"",
+                 err.message
   end
 
   def test_self_check_rejects_a_stale_expected_text
