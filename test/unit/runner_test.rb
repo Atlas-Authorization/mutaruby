@@ -321,7 +321,7 @@ class RunnerTest < Minitest::Test
     with_tmpdir do |tmp|
       with_project(LIB) do |root|
         cmd = rb(%(exit 0 unless ENV["MUTARUBY_MUTANT_ID"]; File.write("#{tmp}/pid-\#{Process.pid}", ""); sleep 30))
-        runner = Mutaruby::Runner.new(options(root: root, command: cmd, jobs: 2), out: StringIO.new)
+        runner = Mutaruby::Runner.new(options(root: root, command: cmd, jobs: 2, timeout: 120), out: StringIO.new)
         t = Thread.new { runner.run }
         t.report_on_exception = false
         pids = -> { Dir[File.join(tmp, 'pid-*')].map { |f| f[/\d+\z/].to_i }.sort }

@@ -5,8 +5,8 @@
 
 Free, MIT-licensed mutation testing for Ruby.
 
-mutaruby is mutation-tested with itself. In version 0.3.0, all 4,950 mutants of its own code are accounted for:
-4,944 are killed by its tests (571 of them by timeout), and the other 6 are true equivalents, each listed in
+mutaruby is mutation-tested with itself. In version 0.3.0, all 4,968 mutants of its own code are accounted for:
+4,962 are killed by its tests (573 of them by timeout), and the other 6 are true equivalents, each listed in
 [`.mutaruby-ignore.yml`](.mutaruby-ignore.yml) with a reason you can check. `bundle exec rake mutate` (or the sharded
 `Self-mutation` workflow) reproduces the run; it fails on any surviving mutant or stale ignore entry.
 
