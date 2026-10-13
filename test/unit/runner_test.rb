@@ -509,8 +509,34 @@ class RunnerTest < Minitest::Test
         t.raise(Interrupt)
         assert_raises(Interrupt) { t.join }
         assert process_gone?(Dir[File.join(tmp, 'base-*')].first[/\d+\z/].to_i)
-        assert_empty sandboxes_in(tmp)
+        assert_empty sandboxes_in(tmp) unless windows? # (Windows may still hold the directory of a process just stopped)
       end
+    end
+  end
+
+  # Makes Sandbox#cleanup fail (only while `error` is set), like a directory Windows keeps locked.
+  module LockedCleanup
+    class << self
+      attr_accessor :error
+    end
+
+    def cleanup
+      raise LockedCleanup.error if LockedCleanup.error
+
+      super
+    end
+  end
+  Mutaruby::Sandbox.prepend(LockedCleanup)
+
+  # A sandbox that cannot be removed is an error of its own, unless the run is already failing: then the original
+  # error (here a failing baseline) is what the user sees.
+  def test_cleanup_errors_do_not_hide_the_real_error
+    with_project(LIB) do |root|
+      LockedCleanup.error = Errno::EACCES
+      assert_raises(Errno::EACCES) { run_on(root, ok, operators: ['arithmetic']) }
+      assert_raises(Mutaruby::BaselineFailed) { run_on(root, rb('exit 1')) }
+    ensure
+      LockedCleanup.error = nil
     end
   end
 end

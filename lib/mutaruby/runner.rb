@@ -101,10 +101,19 @@ module Mutaruby
       @threads&.each(&:join)
       raise
     ensure
-      sandboxes.each(&:cleanup)
+      remove(sandboxes, $!)
     end
 
     private
+
+    # Removes the sandboxes. When the run is already failing (an interrupt, a failing baseline), a sandbox that cannot
+    # be removed is left behind rather than replacing that error: on Windows a process that is still exiting keeps its
+    # directory locked for a moment.
+    def remove(sandboxes, failing)
+      sandboxes.each(&:cleanup)
+    rescue SystemCallError
+      raise unless failing
+    end
 
     def jobs
       [@o.jobs, 1].max

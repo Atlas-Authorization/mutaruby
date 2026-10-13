@@ -17,7 +17,7 @@ module Mutaruby
     # process that is still exiting, or a virus scanner, can hold it for a moment).
     RETRIES = 10
     RETRY_DELAY = 0.1
-    LOCKED = [Errno::EACCES, Errno::EBUSY, Errno::EPERM].freeze
+    LOCKED = [Errno::EACCES, Errno::EBUSY, Errno::EPERM, Errno::ENOTEMPTY].freeze
 
     # Runs the block, retrying while it raises one of the LOCKED errors.
     def self.retrying(tries: RETRIES, delay: RETRY_DELAY)
