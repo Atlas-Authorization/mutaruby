@@ -162,4 +162,22 @@ class SelectionTest < Minitest::Test
       assert_match(/\Agit diff --name-only --relative no-such-ref -- failed: \S.*\S\z/m, err.message)
     end
   end
+
+  def test_subjects
+    src = "module A\n  def i = 1\n  def self.s = 2\n  class B\n    def j = 3\n  end\nend\nclass AB\n  def k = 4\nend\ndef top = 5\nX = 6\n"
+    ms = Mutaruby::Generator.new(src, path: 'x.rb', operators: ['literal-int']).mutations
+    names = ->(subjects) { sel(subjects: subjects).filter(ms).map(&:method).uniq }
+    assert_equal ['A#i', 'A.s', 'A::B#j'], names.call(['A'])
+    assert_equal ['A::B#j'], names.call(['A::B'])
+    assert_equal ['A#i'], names.call(['A#i'])
+    assert_equal ['A.s'], names.call(['A.*'])
+    assert_equal ['A#i'], names.call(['A#*'])
+    assert_equal ['A#i', 'A.s', 'A::B#j', 'AB#k'], names.call(['A*'])
+    assert_equal ['AB#k', 'top'], names.call(%w[AB top])
+    assert_equal [], names.call(['B'])
+    assert_equal ms.map(&:method).uniq, names.call([])
+    assert_includes ms.map(&:method), nil
+    assert_equal ['A#i', 'A.s', 'A::B#j', 'AB#k', 'top'], names.call(['*']), 'code outside methods matches no subject'
+    refute sel(subjects: ['A']).complete?
+  end
 end

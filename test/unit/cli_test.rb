@@ -47,6 +47,12 @@ class CLITest < Minitest::Test
     assert_equal [Etc.nprocessors, true, '.', [], nil, nil, 3.0], [o.jobs, o.progress, o.root, o.patterns, o.command,
                                                                     o.operators, o.timeout_factor]
     assert_equal({}, c.flags)
+    assert_equal [[], false, :text], [o.subjects, o.coverage, o.renderer]
+  end
+
+  def test_coverage_subject_and_unparser_options
+    o = parsed('--coverage', '--unparser', '--subject', 'A#b', '--subject', 'C').options
+    assert_equal [true, :unparser, ['A#b', 'C']], [o.coverage, o.renderer, o.subjects]
   end
 
   def test_every_option_is_parsed

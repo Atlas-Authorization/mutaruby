@@ -17,7 +17,7 @@ module Mutaruby
     # process that is still exiting, or a virus scanner, can hold it for a moment).
     RETRIES = 10
     RETRY_DELAY = 0.1
-    LOCKED = [Errno::EACCES, Errno::EBUSY, Errno::EPERM].freeze
+    LOCKED = [Errno::EACCES, Errno::EBUSY, Errno::EPERM, Errno::ENOTEMPTY].freeze
 
     # Runs the block, retrying while it raises one of the LOCKED errors.
     def self.retrying(tries: RETRIES, delay: RETRY_DELAY)
@@ -49,6 +49,11 @@ module Mutaruby
 
     def path(rel)
       File.join(@dir, rel)
+    end
+
+    # A path for mutaruby's own files: next to the project copy, not inside it.
+    def scratch(name)
+      File.join(@base, name)
     end
 
     # Writes `text` to `rel` inside the sandbox, yields, and restores the original bytes afterwards (also on error).

@@ -52,16 +52,28 @@ module Mutaruby
                           chdir: dir, in: File::NULL, out: out, err: out, **@platform.spawn_options)
       waiter = Process.detach(pid)
       @lock.synchronize { @live[pid] = waiter }
-      timed_out = waiter.join(timeout).nil?
-      # A timed-out run, and (where the platform allows) anything a finished run left behind, must not outlive it.
-      kill_group(pid, waiter) if timed_out || @platform.stop_leftovers?
-      st = waiter.value
-      @lock.synchronize { @live.delete(pid) }
+      begin
+        timed_out = wait(pid, waiter, timeout)
+        # A timed-out run, and (where the platform allows) anything a finished run left behind, must not outlive it.
+        kill_group(pid, waiter) if timed_out || @platform.stop_leftovers?
+        st = waiter.value
+      ensure
+        @lock.synchronize { @live.delete(pid) }
+      end
       status = if timed_out then :timeout
                elsif st.success? then :passed
                else :failed
                end
       Result.new(status: status, exitstatus: st.exitstatus, seconds: monotonic - started)
+    end
+
+    # True when the run timed out. Interrupted while waiting (Ctrl-C), the run is stopped before the interrupt goes on:
+    # its output file, its sandbox and its process group must not outlive it.
+    def wait(pid, waiter, timeout)
+      waiter.join(timeout).nil?
+    rescue Interrupt
+      kill_group(pid, waiter)
+      raise
     end
 
     # Bundler exports the ORIGINAL Gemfile path to child processes. Left as is, `bundle exec` in the sandbox would
@@ -86,6 +98,7 @@ module Mutaruby
       deadline = monotonic + @kill_grace
       sleep POLL while monotonic < deadline && @platform.alive?(pid, waiter)
       @platform.stop_tree(pid, graceful: false)
+      @platform.settle(waiter, @kill_grace)
     end
 
     def tail(bytes)

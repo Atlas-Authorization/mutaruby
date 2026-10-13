@@ -6,6 +6,8 @@ Test oracle:
     -j, --jobs N                     Parallel workers (default: NPROC)
         --timeout SECONDS            Per-mutant timeout (default: baseline time x factor + 5s)
         --timeout-factor F           Multiplier on the baseline time for the default timeout (default: 3)
+        --coverage                   Run only the tests that cover each mutant (Minitest and RSpec; mapped in the baseline run)
+        --unparser                   Render rebuilt nodes with the unparser gem (element-removal; needs gem install unparser)
         --copy-exclude GLOB          Do not copy matching paths into the sandboxes (repeatable; .git and coverage are always skipped)
 
 Selection:
@@ -14,6 +16,7 @@ Selection:
         --exclude-method PATTERN     Skip mutants inside matching methods (repeatable)
         --line SPEC                  Only mutants on these lines: [FILE:]LINE or [FILE:]FROM-TO (repeatable)
         --exclude-line SPEC          Skip mutants on these lines (repeatable)
+        --subject PATTERN            Only mutants in these methods: "Foo#bar", "Foo.bar", "Foo#*", "Foo" (with nested namespaces), "Foo*" (repeatable)
         --operators LIST             Only these operators (comma-separated; globs allowed, e.g. condition-*)
         --exclude-operators LIST     Skip these operators (comma-separated; globs allowed)
         --shard I/N                  Run only shard I of N (1-based) of the selected mutants

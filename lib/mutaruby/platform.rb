@@ -20,6 +20,9 @@ module Mutaruby
       # After a run ends, whatever is left of its process group is stopped too.
       def stop_leftovers? = true
 
+      # Nothing to wait for: the group is gone once signalled with SIGKILL.
+      def settle(_waiter, _seconds); end
+
       # graceful: SIGTERM, otherwise SIGKILL, to the process group led by pid.
       def stop_tree(pid, graceful:)
         Process.kill(graceful ? 'TERM' : 'KILL', -pid)
@@ -56,6 +59,12 @@ module Mutaruby
       # Not after a normal exit: taskkill /T finds the tree through the (now exited) parent process, and Windows may
       # already have reused its id for an unrelated process.
       def stop_leftovers? = false
+
+      # After taskkill /F, give the process up to `seconds` to exit for good: until then Windows keeps its files and
+      # working directory (the sandbox) locked.
+      def settle(waiter, seconds)
+        waiter.join(seconds)
+      end
 
       def stop_tree(pid, graceful:)
         @system.call('taskkill', '/T', *(graceful ? [] : ['/F']), '/PID', pid.to_s)

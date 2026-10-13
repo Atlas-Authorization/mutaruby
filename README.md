@@ -5,10 +5,10 @@
 
 Free, MIT-licensed mutation testing for Ruby.
 
-mutaruby is mutation-tested with itself. In version 0.2.0, all 3,812 mutants of its own code are accounted for:
-3,806 are killed by its tests (521 of them by timeout), and the other 6 are true equivalents, each listed in
-[`.mutaruby-ignore.yml`](.mutaruby-ignore.yml) with a reason you can check. `bundle exec rake mutate` reproduces the
-run; it fails on any surviving mutant or stale ignore entry.
+mutaruby is mutation-tested with itself. In version 0.3.0, all 4,968 mutants of its own code are accounted for:
+4,962 are killed by its tests (573 of them by timeout), and the other 6 are true equivalents, each listed in
+[`.mutaruby-ignore.yml`](.mutaruby-ignore.yml) with a reason you can check. `bundle exec rake mutate` (or the sharded
+`Self-mutation` workflow) reproduces the run; it fails on any surviving mutant or stale ignore entry.
 
 mutaruby makes small, deliberate changes to your code, one at a time, and runs your test command against each change.
 If your tests still pass, the change (the *mutant*) **survived**, and that points to code your tests do not really check.
@@ -43,6 +43,7 @@ The survivor above tells you that no test checks a total of exactly 100.
 - [Quickstart](#quickstart)
 - [CLI reference](#cli-reference)
 - [Mutation operators](#mutation-operators)
+- [Coverage-based test selection](#coverage-based-test-selection)
 - [Equivalent mutants: the ignore file](#equivalent-mutants-the-ignore-file)
 - [Using it in CI](#using-it-in-ci)
 - [Output formats](#output-formats)
@@ -138,6 +139,8 @@ Positional arguments are files or globs relative to the project root. The defaul
 | `-t`, `--test COMMAND` | **Required.** Shell command that runs your tests: run with `/bin/sh -c` on Linux and macOS, with `cmd.exe` on Windows. Exit 0 means the mutant survived, non-zero means killed. |
 | `-C`, `--root DIR` | Project root (default: the current directory). This is the directory copied into each sandbox, and the command runs there. |
 | `-j`, `--jobs N` | Parallel workers (default: the number of CPUs). Each worker has its own copy of the project. |
+| `--coverage` | Run, for each mutant, only the tests that execute its lines (Minitest and RSpec). See [Coverage-based test selection](#coverage-based-test-selection). |
+| `--unparser` | Render rebuilt nodes (the `element-removal` operator) with the [`unparser`](https://github.com/mbj/unparser) gem instead of from the source text. Needs `gem install unparser`. |
 | `--timeout SECONDS` | Per-mutant time limit. A mutant that exceeds it (an infinite loop, say) is killed together with every process it started and counted as **killed, by timeout**. The default is `baseline time x factor + 5` seconds. |
 | `--timeout-factor F` | The factor for the default timeout (default: 3). |
 | `--copy-exclude GLOB` | Do not copy matching paths into the sandboxes (repeatable). `.git` and `coverage` are never copied. Matches against the relative path and against the base name, e.g. `--copy-exclude node_modules --copy-exclude 'log/*'`. |
@@ -150,6 +153,7 @@ The command gets these environment variables: `MUTARUBY=1`, and while a mutant r
 | Option | Meaning |
 |---|---|
 | `--since REF` | Only mutate files changed since a git ref: committed, staged and unstaged changes plus new untracked files (`git diff --name-only REF` and `git ls-files --others --exclude-standard`), intersected with the file arguments. |
+| `--subject PATTERN` | Only mutants in these methods (repeatable): `Foo#bar` (instance method), `Foo.bar` (singleton method), `Foo#*` / `Foo.*` (all of one kind), `Foo` or `Foo::Bar` (every method of that namespace and of the namespaces nested in it), `Foo*` (a glob over namespaces). |
 | `--method PATTERN` | Only mutants inside matching methods (repeatable). The pattern is a glob matched against the qualified name (`Pricing#discount` for an instance method, `Pricing.build` for a singleton method) or the bare name (`discount`). `Pricing#*` selects every instance method of `Pricing`. |
 | `--exclude-method PATTERN` | Skip mutants inside matching methods (repeatable). |
 | `--line SPEC` | Only mutants starting on these lines (repeatable). `SPEC` is `[FILE:]LINE` or `[FILE:]FROM-TO`, e.g. `lib/a.rb:10-20` or `42`. |
@@ -237,9 +241,55 @@ mutant's, are dropped before anything runs. `--list-operators` prints this list.
 | `op-assign` | swaps compound assignments: `+=` and `-=`, `*=` and `/=`, `\|=` and `&=`, `<<=` and `>>=` | `i += 1` to `i -= 1` |
 | `or-assign` | `\|\|=` becomes `=` | `@x \|\|= load` to `@x = load` |
 | `and-assign` | `&&=` becomes `=` | `a &&= b` to `a = b` |
+| `block-removal` | a call loses its block | `list.map { \|x\| f(x) }` to `list.map` |
+| `method-swap` | a method becomes its counterpart: `first`/`last`, `min`/`max`, `min_by`/`max_by`, `any?`/`all?`, `select`/`reject` (and `filter`), `upcase`/`downcase`, `floor`/`ceil`, `succ`/`pred`, `keys`/`values`, `start_with?`/`end_with?`, `take`/`drop`, `take_while`/`drop_while`, `push`/`unshift`, `pop`/`shift` | `items.first` to `items.last` |
+| `element-removal` | one element of a bracketed array or braced hash removed (literals with 2 to 6 elements) | `[a, b]` to `[b]` and `[a]` |
+| `regexp-never-match` | a regexp literal becomes one that matches nothing | `/\A\d+\z/` to `/(?!)/` |
+| `yield-removal` | `yield` becomes `nil` | `yield(item)` to `nil` |
+| `super-removal` | `super` becomes `nil` | `super(name)` to `nil` |
+| `when-removal` | one `when` branch of a `case` removed | |
+| `rescue-removal` | one `rescue` clause removed | |
 
 Strings inside interpolations, heredocs, `%w[]` arrays and the arguments of `require`-style declarations are not
 mutated, and neither are symbols used as hash keys (`a: 1`).
+
+## Coverage-based test selection
+
+Most mutants are reached by only a few tests, yet by default every mutant runs the whole test command. With
+`--coverage`, mutaruby first finds out which tests execute which lines, then runs each mutant against just those
+tests:
+
+```sh
+mutaruby -t "bundle exec rspec" --coverage
+mutaruby -t "bundle exec rake test" --coverage
+```
+
+How it works:
+
+1. The baseline run (which has to pass anyway) is made with a small probe loaded into the test process
+   (`RUBYLIB` plus `RUBYOPT=-rmutaruby_probe`). The probe uses Ruby's `Coverage` API and the test framework's
+   per-test hooks to record, for every test, the lines of the project it executes. Tests are identified as
+   `Class#test_name` for Minitest and by the example id (`./spec/a_spec.rb[1:2]`) for RSpec.
+2. For each mutant, the tests that execute any of its lines are written to a file, and the run loads the probe in
+   selection mode, which tells Minitest or RSpec to run only those tests. The test command itself is unchanged.
+3. A mutant runs the **whole** command instead when one of its lines ran while the code was being loaded (a class
+   body, a constant, a method definition line), when no test reaches its lines, or when the baseline recorded no
+   Minitest or RSpec tests at all (mutaruby then prints a warning).
+
+What it saves depends on the suite. Measured on GitHub Actions (`script/benchmark-coverage.rb`, 4 workers), with the
+same verdicts both ways:
+
+| Project | Mutants | Whole test command | `--coverage` |
+|---|---|---|---|
+| mutaruby's own unit suite (a 1/25 sample of its mutants) | 199 | 3,788 s | 2,276 s (1.7x faster) |
+| `test/fixtures/calc` (5 tests, Minitest or RSpec) | 43 | 13 s | 13 s |
+
+A small suite gains nothing: starting Ruby costs more than its tests. The larger and slower the suite, and the fewer
+tests reach each line, the bigger the win.
+
+The summary shows how many mutants ran a subset, and the JSON report has, per mutant, the number of tests it ran
+(`tests`, or `null` for the whole command). Selection assumes that tests are independent of each other: a test that
+only passes after another one has run can make a mutant look killed.
 
 ## Equivalent mutants: the ignore file
 
@@ -342,17 +392,21 @@ survivors as failed tests.
 
 ## How it compares with mutant
 
-[mutant](https://github.com/mbj/mutant) is the established mutation tester for Ruby, and it is more mature and more
-capable than mutaruby: it has many more operators, semantic knowledge of Ruby's core library, selection of only the
-tests that cover each subject, and years of use on large code bases. It is commercially licensed (free for open
-source projects).
+[mutant](https://github.com/mbj/mutant) is the mature reference implementation of mutation testing for Ruby, and the
+tool mutaruby is most often compared with. It is more capable: many more operators, semantic knowledge of Ruby's core
+library, precise subject and test selection, and years of use on large code bases. It is distributed under its own
+commercial licence (free for open source projects).
+
+**mutaruby shares no code with mutant.** It is an independent, clean-room implementation, written from general,
+publicly known ideas about mutation testing (operators, coverage-based test selection, equivalent-mutant handling),
+and it is MIT-licensed. Its only runtime dependency is `parser`; `unparser`, an MIT-licensed gem, is an optional
+extra for `--unparser`.
 
 mutaruby aims to be **MIT-licensed and simple**:
 
 - It works with **any test command** (rspec, minitest, rake, a Makefile target), because the oracle is just an exit
-  status. There is no framework integration to configure, and no per-test selection either, so it is slower than
-  mutant on big suites unless you point the command at the relevant tests.
-- It is small enough to read in an afternoon, and it has no dependency besides `parser`.
+  status. With `--coverage` it also runs only the tests that reach each mutant, for Minitest and RSpec suites.
+- It is small enough to read in an afternoon.
 - It runs each mutant in a **separate process** in a **copy of the project**, so it cannot leave your working tree
   modified.
 
@@ -419,7 +473,8 @@ mutaruby works the same way on Windows, with these differences:
 
 - On Windows, processes that a test run leaves running after it exits normally are not stopped (see
   [Windows notes](#windows-notes)).
-- The test command is run as is for every mutant; mutaruby does not work out which tests cover which code.
+- Per-test selection (`--coverage`) understands Minitest and RSpec; any other command runs in full for every mutant.
+  Selection assumes the tests do not depend on each other's order or side effects.
 - The parser grammar is chosen to match the running Ruby, up to the newest grammar the installed `parser` gem knows.
   Files that `parser` cannot read (for example syntax newer than it supports) are skipped with a warning.
 - Mutants are syntactic. Some are equivalent by nature; that is what the ignore file is for.

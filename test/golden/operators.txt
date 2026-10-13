@@ -34,3 +34,11 @@ raise-removal          raise X -> nil (also fail)
 op-assign              swap compound assignment (+= <-> -=, *= <-> /=, |= <-> &=, <<= <-> >>=)
 or-assign              a ||= b -> a = b
 and-assign             a &&= b -> a = b
+block-removal          list.map { |x| f(x) } -> list.map (the call without its block)
+method-swap            swap a method for its counterpart (first <-> last, min <-> max, select <-> reject, ...)
+element-removal        [a, b] -> [b], [a]; { k: 1, j: 2 } -> { j: 2 }, { k: 1 } (one element removed at a time)
+regexp-never-match     /pattern/ -> /(?!)/ (a regexp that matches nothing)
+yield-removal          yield x -> nil
+super-removal          super / super(x) -> nil
+when-removal           one `when` branch of a case removed
+rescue-removal         one `rescue` clause removed

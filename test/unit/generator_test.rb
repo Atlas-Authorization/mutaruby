@@ -377,4 +377,66 @@ class GeneratorTest < Minitest::Test
     lf = crlf.delete("\r")
     assert_equal "if !(a &&\n   b)\n  x\nend\n", muts(lf, operators: ['condition-negate']).first.text
   end
+
+  def test_block_removal
+    assert_equal ['l.map { |x| x } => l.map', 'loop do x end => loop', 'l.each { _1 } => l.each'],
+                 changes("l.map { |x| x }\nloop do\n  x\nend\nl.each { _1 }\n", 'block-removal')
+  end
+
+  def test_method_swap
+    assert_equal ['first => last', 'min => max', 'any? => all?', 'select => reject', 'push => unshift'],
+                 changes("a.first\na.min\na.any? { _1 }\na.select(&:x)\na.push(1)\n", 'method-swap')
+    assert_empty changes("first\nselect(1)\n", 'method-swap')
+    Mutaruby::Generator::METHOD_SWAPS.each do |from, to|
+      assert Mutaruby::Generator::METHOD_SWAPS.key?(to), "#{to} has no swap back"
+      assert_equal ["#{from} => #{to}"], changes("x.#{from}\n", 'method-swap')
+    end
+  end
+
+  def test_element_removal_with_text
+    assert_equal ['1, 2, 3 => 2, 3', '1, 2, 3 => 1, 3', '1, 2, 3 => 1, 2'], changes("x = [1, 2, 3]\n", 'element-removal')
+    assert_equal ['a: 1, b: 2 => b: 2', 'a: 1, b: 2 => a: 1'], changes("x = { a: 1, b: 2 }\n", 'element-removal')
+    assert_empty changes("x = [1]\ny = %w[a b]\nz = f(a: 1, b: 2)\nw = 1, 2\n", 'element-removal')
+    assert_empty changes("x = [1, 2, 3, 4, 5, 6, 7]\n", 'element-removal')
+    assert_equal 6, changes("x = [1, 2, 3, 4, 5, 6]\n", 'element-removal').size
+  end
+
+  def test_element_removal_with_unparser
+    ms = Mutaruby::Generator.new("x = [1, 2]\ny = {a: 1, b: 2}\n", path: 's.rb', operators: ['element-removal'],
+                                                                     renderer: :unparser).mutations
+    assert_equal ['[1, 2] => [2]', '[1, 2] => [1]', '{a: 1, b: 2} => { b: 2 }', '{a: 1, b: 2} => { a: 1 }'],
+                 ms.map(&:change)
+    assert_equal "x = [2]\ny = {a: 1, b: 2}\n", ms.first.text
+  end
+
+  def test_regexp_yield_super
+    assert_equal ['/a+/i => /(?!)/', '/x#{y}/ => /(?!)/'], changes("r = /a+/i\ns = /x\#{y}/\n", 'regexp-never-match')
+    assert_equal ['yield => nil', 'yield(1) => nil'], changes("def f\n  yield\n  yield(1)\nend\n", 'yield-removal')
+    assert_equal ['super => nil', 'super(1) => nil'], changes("def f\n  super\n  super(1)\nend\n", 'super-removal')
+  end
+
+  def test_clause_removal
+    src = "case x\nwhen 1 then a\nwhen 2 then b\nend\n"
+    assert_equal ['when 1 then a =>', 'when 2 then b =>'], changes(src, 'when-removal')
+    assert_empty changes("case x\nwhen 1 then a\nend\n", 'when-removal'), 'a case needs a when'
+    assert_empty changes("case x\nwhen 1 then a\nelse b\nend\n", 'when-removal')
+    src = "begin\n  a\nrescue A\n  b\nrescue B\n  c\nend\n"
+    assert_equal ['rescue A b =>', 'rescue B c =>'], changes(src, 'rescue-removal')
+    m = muts(src, operators: ['rescue-removal']).first
+    assert_equal "begin\n  a\n\nrescue B\n  c\nend\n", m.text
+  end
+
+  def test_nested_method_definitions
+    src = "def outer\n  def inner\n    1\n  end\n  2\nend\n"
+    ms = muts(src, operators: ['literal-int'])
+    assert_equal [%w[1 inner], %w[2 outer]], ms.map { |m| [m.orig, m.method] }.uniq
+  end
+
+  def test_only_known_methods_are_swapped
+    assert_empty changes("a.foo(1)\na.bar\n", 'method-swap')
+  end
+
+  def test_call_to_argument_takes_the_first_argument
+    assert_equal ['o.f(a, b) => a'], changes("o.f(a, b)\n", 'call-to-argument')
+  end
 end

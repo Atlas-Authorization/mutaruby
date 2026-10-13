@@ -21,4 +21,5 @@ mutaruby summary
   survived:    2
   equivalent:  1 (ignore file)
   score:       66.67%  = killed / (mutants - equivalent)
+  coverage:    minitest: 3 of 7 mutants ran only the tests covering them
   time:        3.3s (baseline 1.23s, timeout 9s, jobs 2)

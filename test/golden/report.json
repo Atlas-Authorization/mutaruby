@@ -4,6 +4,7 @@
   "command": "rake test",
   "score": 66.6667,
   "complete": true,
+  "coverage": "minitest",
   "counts": {
     "mutants": 7,
     "killed": 4,
@@ -32,7 +33,8 @@
       "label": "logical-swap: && => ||",
       "status": "killed",
       "seconds": 0.123,
-      "ignore_reason": null
+      "ignore_reason": null,
+      "tests": null
     },
     {
       "id": 1,
@@ -48,7 +50,8 @@
       "label": "comparison: < => <=",
       "status": "survived",
       "seconds": 0.247,
-      "ignore_reason": null
+      "ignore_reason": null,
+      "tests": 1
     },
     {
       "id": 2,
@@ -64,7 +67,8 @@
       "label": "comparison: > => >=",
       "status": "timeout",
       "seconds": 0.37,
-      "ignore_reason": null
+      "ignore_reason": null,
+      "tests": null
     },
     {
       "id": 3,
@@ -80,7 +84,8 @@
       "label": "unary-minus-removal: -b => b",
       "status": "equivalent",
       "seconds": 0.494,
-      "ignore_reason": "r & <why>"
+      "ignore_reason": "r & <why>",
+      "tests": 3
     },
     {
       "id": 4,
@@ -96,7 +101,8 @@
       "label": "arithmetic: - => +",
       "status": "survived",
       "seconds": 0.617,
-      "ignore_reason": null
+      "ignore_reason": null,
+      "tests": null
     },
     {
       "id": 5,
@@ -112,7 +118,8 @@
       "label": "arithmetic: + => -",
       "status": "killed",
       "seconds": 0.741,
-      "ignore_reason": null
+      "ignore_reason": null,
+      "tests": 5
     },
     {
       "id": 6,
@@ -128,7 +135,8 @@
       "label": "arithmetic: * => /",
       "status": "killed",
       "seconds": 0.864,
-      "ignore_reason": null
+      "ignore_reason": null,
+      "tests": null
     }
   ],
   "stale_ignores": [

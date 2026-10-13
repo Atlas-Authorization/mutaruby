@@ -27,10 +27,12 @@ class RunnerTest < Minitest::Test
   def ok = rb('exit 0')
 
   # A private TMPDIR, so the sandboxes a run creates can be counted.
+  # (Removed with rm_rf: on Windows a file an interrupted run's output went to can stay locked for a moment.)
   def with_tmpdir
-    Dir.mktmpdir do |t|
-      with_env('TMPDIR' => t) { yield t }
-    end
+    t = Dir.mktmpdir
+    with_env('TMPDIR' => t) { yield t }
+  ensure
+    FileUtils.rm_rf(t) if t
   end
 
   def sandboxes_in(tmp) = Dir.glob(File.join(tmp, "#{sandbox_prefix}*"))
@@ -41,6 +43,7 @@ class RunnerTest < Minitest::Test
                  [o.root, o.patterns, o.jobs, o.timeout_factor, o.methods, o.exclude_methods, o.lines, o.exclude_lines,
                   o.copy_excludes, o.progress]
     assert_nil o.timeout
+    assert_equal [[], false, :text], [o.subjects, o.coverage, o.renderer]
     assert_equal 4, Mutaruby::Runner::Options.build(jobs: 4).jobs
     assert_equal({ killed: '.', timeout: 'T', survived: 'S', equivalent: 'e' }, Mutaruby::Runner::MARK)
   end
@@ -318,13 +321,19 @@ class RunnerTest < Minitest::Test
     with_tmpdir do |tmp|
       with_project(LIB) do |root|
         cmd = rb(%(exit 0 unless ENV["MUTARUBY_MUTANT_ID"]; File.write("#{tmp}/pid-\#{Process.pid}", ""); sleep 30))
-        t = Thread.new { run_on(root, cmd, jobs: 2) }
+        runner = Mutaruby::Runner.new(options(root: root, command: cmd, jobs: 2, timeout: 120), out: StringIO.new)
+        t = Thread.new { runner.run }
         t.report_on_exception = false
         pids = -> { Dir[File.join(tmp, 'pid-*')].map { |f| f[/\d+\z/].to_i }.sort }
         sleep 0.02 until pids.call.size == 2
         sleep 0.1
+        t0 = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        SlowRestore.delay = 0.5 # a worker still busy after its run is killed: the runner must wait for it
         t.raise(Interrupt)
         assert_raises(Interrupt) { t.join }
+        SlowRestore.delay = nil
+        assert_operator Process.clock_gettime(Process::CLOCK_MONOTONIC) - t0, :<, 8, 'the run stops without finishing the queue'
+        assert_equal [false, false], runner.instance_variable_get(:@threads).map(&:alive?), 'workers are stopped'
         started = pids.call
         sleep 0.3
         assert_equal started, pids.call, 'no new mutant may start after an interrupt'
@@ -334,6 +343,22 @@ class RunnerTest < Minitest::Test
     end
   end
 
+  # Makes a worker take a while to restore its sandbox after a run (only while `delay` is set).
+  module SlowRestore
+    class << self
+      attr_accessor :delay
+    end
+
+    def with_file(*args)
+      super(*args) do
+        result = yield
+        sleep SlowRestore.delay if SlowRestore.delay
+        result
+      end
+    end
+  end
+  Mutaruby::Sandbox.prepend(SlowRestore)
+
   # An IO that records flushes.
   class Recorder < StringIO
     attr_reader :flushes
@@ -341,6 +366,177 @@ class RunnerTest < Minitest::Test
     def flush
       @flushes = (@flushes || 0) + 1
       super
+    end
+  end
+
+  COVERED = {
+    'lib/a.rb' => "module A\n  def self.one\n    1\n  end\n\n  def self.two\n    2\n  end\nend\n",
+    'test/a_test.rb' => <<~RUBY
+      require 'minitest/autorun'
+      require_relative '../lib/a'
+
+      class ATest < Minitest::Test
+        def setup
+          File.write(File.join(ENV['LOG'], "\#{ENV.fetch('MUTARUBY_MUTANT_ID', 'base')}-\#{name}"), '') if ENV['LOG']
+        end
+
+        def test_one
+          assert_equal 1, A.one
+        end
+
+        def test_two
+          assert_equal 2, A.two
+        end
+      end
+    RUBY
+  }.freeze
+
+  # With coverage, the baseline maps tests to lines and each mutant runs only the tests that reach it.
+  def test_coverage_based_selection
+    with_project(COVERED) do |root|
+      Dir.mktmpdir do |log|
+        with_env('LOG' => log) do
+          cmd = %("#{RbConfig.ruby}" test/a_test.rb)
+          r = run_on(root, cmd, coverage: true, operators: ['literal-int'], jobs: 1)
+          assert_equal 'minitest', r.coverage
+          assert_equal [], r.warnings
+          ran = Dir.children(log).sort
+          r.outcomes.each do |o|
+            m = o.mutation
+            want = m.lineno == 3 ? 'test_one' : 'test_two'
+            assert_equal 1, o.tests, m.label
+            assert_equal ["#{m.id}-#{want}"], ran.select { |f| f.start_with?("#{m.id}-") }, m.label
+            assert_equal :killed, o.status
+          end
+          assert_equal %w[base-test_one base-test_two], ran.select { |f| f.start_with?('base-') }
+          plain = run_on(root, cmd, operators: ['literal-int'], jobs: 1)
+          assert_nil plain.coverage
+          assert_equal [nil], plain.outcomes.map(&:tests).uniq
+        end
+      end
+    end
+  end
+
+  # A test command that is not Minitest or RSpec cannot be mapped: everything runs the whole command.
+  def test_coverage_without_a_supported_framework
+    with_project(LIB) do |root|
+      r = run_on(root, killer, coverage: true, operators: ['arithmetic'])
+      assert_nil r.coverage
+      assert_equal ['coverage: no Minitest or RSpec tests were recorded in the baseline run; every mutant runs the ' \
+                    'whole test command'], r.warnings
+      assert_equal [nil], r.outcomes.map(&:tests)
+      assert_equal [:killed], r.outcomes.map(&:status)
+    end
+  end
+
+  def test_subjects_and_renderer_reach_the_plan
+    src = "class K\n  def a = [1, 2]\nend\nclass L\n  def b = 3\nend\n"
+    with_project('lib/k.rb' => src) do |root|
+      plan = Mutaruby::Runner.new(options(root: root, command: ok, subjects: ['K'], operators: ['element-removal'],
+                                          renderer: :unparser), out: StringIO.new).plan
+      assert_equal ['[1, 2] => [2]', '[1, 2] => [1]'], plan[:mutations].map(&:change)
+      refute plan[:complete]
+    end
+  end
+
+  SAFE = {
+    'lib/s.rb' => "module S\n  def self.safe(x)\n    Integer(x)\n  rescue ArgumentError\n    0\n  end\nend\n",
+    'test/s_test.rb' => <<~RUBY
+      require 'minitest/autorun'
+      require_relative '../lib/s'
+
+      class STest < Minitest::Test
+        def test_ok
+          assert_equal 3, S.safe('3')
+        end
+
+        def test_bad
+          assert_equal 0, S.safe('x')
+        end
+      end
+    RUBY
+  }.freeze
+
+  # A mutant spanning several lines selects the tests of all of them: removing the rescue clause (its first line has
+  # no coverage of its own) runs the test that reaches the clause's body.
+  def test_coverage_of_multi_line_mutants
+    with_project(SAFE) do |root|
+      r = run_on(root, %("#{RbConfig.ruby}" test/s_test.rb), coverage: true, operators: ['rescue-removal'])
+      assert_equal [[1, :killed]], r.outcomes.map { |o| [o.tests, o.status] }
+    end
+  end
+
+  # The probe is loaded only with --coverage.
+  def test_baseline_loads_the_probe_only_with_coverage
+    with_project(LIB) do |root|
+      Dir.mktmpdir do |log|
+        show = rb(%(File.write("#{log}/\#{ENV.fetch('MUTARUBY_MUTANT_ID', 'base')}", ENV.fetch('MUTARUBY_COVERAGE_OUT', '-'))))
+        run_on(root, show, operators: ['arithmetic'])
+        assert_equal '-', File.read(File.join(log, 'base'))
+        run_on(root, show, operators: ['arithmetic'], coverage: true)
+        assert File.read(File.join(log, 'base')).end_with?('coverage.json')
+      end
+    end
+  end
+
+  # A Minitest suite without tests records nothing usable: same fallback and warning.
+  def test_coverage_with_an_empty_suite
+    empty = "require 'minitest/autorun'\nrequire_relative '../lib/a'\nclass EmptyTest < Minitest::Test\nend\n"
+    with_project(COVERED.merge('test/a_test.rb' => empty)) do |root|
+      r = run_on(root, %("#{RbConfig.ruby}" test/a_test.rb), coverage: true, operators: ['literal-int'])
+      assert_nil r.coverage
+      assert_equal 1, r.warnings.size
+      assert_equal [nil], r.outcomes.map(&:tests).uniq
+    end
+  end
+
+  def test_default_renderer_is_text
+    with_project('lib/k.rb' => "X = [1,  2]\n") do |root|
+      plan = Mutaruby::Runner.new(options(root: root, command: ok, operators: ['element-removal']), out: StringIO.new).plan
+      assert_equal ['1, 2 => 2', '1, 2 => 1'], plan[:mutations].map(&:change)
+    end
+  end
+
+  # Interrupted during the baseline (before any worker exists): the interrupt propagates and nothing is left behind.
+  def test_interrupt_during_the_baseline
+    with_tmpdir do |tmp|
+      with_project(LIB) do |root|
+        cmd = rb(%(File.write("#{tmp}/base-\#{Process.pid}", ""); sleep 30))
+        runner = Mutaruby::Runner.new(options(root: root, command: cmd), out: StringIO.new)
+        t = Thread.new { runner.run }
+        t.report_on_exception = false
+        sleep 0.02 until Dir[File.join(tmp, 'base-*')].any?
+        t.raise(Interrupt)
+        assert_raises(Interrupt) { t.join }
+        assert process_gone?(Dir[File.join(tmp, 'base-*')].first[/\d+\z/].to_i)
+        assert_empty sandboxes_in(tmp) unless windows? # (Windows may still hold the directory of a process just stopped)
+      end
+    end
+  end
+
+  # Makes Sandbox#cleanup fail (only while `error` is set), like a directory Windows keeps locked.
+  module LockedCleanup
+    class << self
+      attr_accessor :error
+    end
+
+    def cleanup
+      raise LockedCleanup.error if LockedCleanup.error
+
+      super
+    end
+  end
+  Mutaruby::Sandbox.prepend(LockedCleanup)
+
+  # A sandbox that cannot be removed is an error of its own, unless the run is already failing: then the original
+  # error (here a failing baseline) is what the user sees.
+  def test_cleanup_errors_do_not_hide_the_real_error
+    with_project(LIB) do |root|
+      LockedCleanup.error = Errno::EACCES
+      assert_raises(Errno::EACCES) { run_on(root, ok, operators: ['arithmetic']) }
+      assert_raises(Mutaruby::BaselineFailed) { run_on(root, rb('exit 1')) }
+    ensure
+      LockedCleanup.error = nil
     end
   end
 end

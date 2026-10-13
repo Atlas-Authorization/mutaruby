@@ -187,6 +187,10 @@ class CommandTest < Minitest::Test
     def spawn_options = @real.spawn_options
     def stop_leftovers? = @leftovers
 
+    def settle(waiter, seconds)
+      @calls << [:settle, waiter.class, seconds]
+    end
+
     def stop_tree(pid, graceful:)
       @calls << [:stop_tree, graceful]
       @real.stop_tree(pid, graceful: graceful)
@@ -206,11 +210,13 @@ class CommandTest < Minitest::Test
       assert_equal [[:spawn_args, quick]], keep.calls, 'no tree stop after a normal exit when the platform says so'
       stop = FakePlatform.new(leftovers: true)
       Mutaruby::Command.new(quick, root: d, platform: stop).run(d)
-      assert_equal [[:spawn_args, quick], [:stop_tree, true], [:alive?, Process::Waiter], [:stop_tree, false]], stop.calls
+      assert_equal [[:spawn_args, quick], [:stop_tree, true], [:alive?, Process::Waiter], [:stop_tree, false],
+                    [:settle, Process::Waiter, 2]], stop.calls
       slow = FakePlatform.new(leftovers: false, alive: [true, true])
       r = Mutaruby::Command.new(rb('sleep 30'), root: d, platform: slow, kill_grace: 5).run(d, timeout: 0.2)
       assert r.timeout?
-      assert_equal [[:stop_tree, true], [:alive?, Process::Waiter], [:alive?, Process::Waiter], [:alive?, Process::Waiter], [:stop_tree, false]], slow.calls.drop(1)
+      assert_equal [[:stop_tree, true], [:alive?, Process::Waiter], [:alive?, Process::Waiter], [:alive?, Process::Waiter],
+                    [:stop_tree, false], [:settle, Process::Waiter, 5]], slow.calls.drop(1)
     end
   end
 
@@ -227,6 +233,21 @@ class CommandTest < Minitest::Test
       assert_operator r.seconds, :<, 3
       assert_empty cmd.instance_variable_get(:@live)
       cmd.kill_all
+    end
+  end
+
+  # Regression: interrupted while waiting for a run, Command stops that run itself before the interrupt goes on.
+  def test_an_interrupted_run_is_stopped
+    Dir.mktmpdir do |d|
+      cmd = Mutaruby::Command.new(rb('File.write("run.pid", Process.pid.to_s); sleep 30'), root: d, kill_grace: 0.5)
+      t = Thread.new { cmd.run(d, capture: true) }
+      t.report_on_exception = false
+      pid_file = File.join(d, 'run.pid')
+      sleep 0.02 until File.exist?(pid_file) && !File.read(pid_file).empty?
+      t.raise(Interrupt)
+      assert_raises(Interrupt) { t.join }
+      assert dead?(File.read(pid_file).to_i)
+      assert_empty cmd.instance_variable_get(:@live)
     end
   end
 

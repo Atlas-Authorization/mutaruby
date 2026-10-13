@@ -49,6 +49,16 @@ class PlatformTest < Minitest::Test
                  [x.name, x.spawn_args('rake test'), x.spawn_options, x.temp_prefix, x.stop_leftovers?]
   end
 
+  def test_settling_waits_for_the_reaper_on_windows_only
+    joined = []
+    waiter = Object.new
+    waiter.define_singleton_method(:join) { |s| joined << s }
+    assert_nil P::Posix.new.settle(waiter, 3)
+    assert_equal [], joined
+    P::Windows.new.settle(waiter, 3)
+    assert_equal [3], joined
+  end
+
   def test_windows_stops_the_tree_with_taskkill
     calls = []
     x = P::Windows.new(system: ->(*argv) { calls << argv })

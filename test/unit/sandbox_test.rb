@@ -11,7 +11,7 @@ class SandboxTest < Minitest::Test
 
   def test_constants
     assert_equal %w[.git coverage], Mutaruby::Sandbox::DEFAULT_EXCLUDES
-    assert_equal [10, 0.1, [Errno::EACCES, Errno::EBUSY, Errno::EPERM]],
+    assert_equal [10, 0.1, [Errno::EACCES, Errno::EBUSY, Errno::EPERM, Errno::ENOTEMPTY]],
                  [Mutaruby::Sandbox::RETRIES, Mutaruby::Sandbox::RETRY_DELAY, Mutaruby::Sandbox::LOCKED]
   end
 

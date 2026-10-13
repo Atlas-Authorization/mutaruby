@@ -40,5 +40,12 @@ jobs:
           bundle exec ruby exe/mutaruby -C test/fixtures/calc -t "ruby test/test_calc.rb" --operators op-assign \
             --timeout 5 -j 2 -q --json fixture.json
           ruby -rjson -e 'c = JSON.parse(File.read("fixture.json"))["counts"]; p c; exit(c["timeout"] >= 1 ? 0 : 1)'
+      - name: Fixture run with coverage-based selection (Minitest and RSpec)
+        shell: bash
+        run: |
+          for cmd in "ruby test/test_calc.rb" "ruby -S rspec"; do
+            bundle exec ruby exe/mutaruby -C test/fixtures/calc -t "$cmd" --coverage --timeout 10 -j 2 -q --json cov.json
+            ruby -rjson -e 'r = JSON.parse(File.read("cov.json")); p [r["coverage"], r["counts"]]; exit(r["coverage"] && r["counts"]["survived"] == 2 ? 0 : 1)'
+          done
       - name: Build the gem
         run: gem build mutaruby.gemspec
