@@ -236,6 +236,21 @@ class CommandTest < Minitest::Test
     end
   end
 
+  # Regression: interrupted while waiting for a run, Command stops that run itself before the interrupt goes on.
+  def test_an_interrupted_run_is_stopped
+    Dir.mktmpdir do |d|
+      cmd = Mutaruby::Command.new(rb('File.write("run.pid", Process.pid.to_s); sleep 30'), root: d, kill_grace: 0.5)
+      t = Thread.new { cmd.run(d, capture: true) }
+      t.report_on_exception = false
+      pid_file = File.join(d, 'run.pid')
+      sleep 0.02 until File.exist?(pid_file) && !File.read(pid_file).empty?
+      t.raise(Interrupt)
+      assert_raises(Interrupt) { t.join }
+      assert dead?(File.read(pid_file).to_i)
+      assert_empty cmd.instance_variable_get(:@live)
+    end
+  end
+
   def test_fast_command_is_not_a_timeout
     Dir.mktmpdir { |d| assert run_cmd(rb('exit 0'), d, timeout: 5).passed? }
   end

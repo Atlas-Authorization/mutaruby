@@ -21,6 +21,8 @@ All notable changes to this project are documented here. The format follows
 ### Fixed
 
 - An interrupted run starts no new mutant and waits for its workers to finish before it removes their sandboxes.
+- A test run interrupted while mutaruby waits for it is stopped (with its process tree) before the interrupt goes
+  on, so its output file and sandbox are free to be removed.
 - On Windows, a forcibly stopped run is given time to exit for good before its sandbox is removed (the directory
   stays locked until then). A sandbox that still cannot be removed no longer hides the real error (Ctrl-C, a
   failing baseline); removal is also retried when the directory is not yet empty.
